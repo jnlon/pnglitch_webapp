@@ -1,0 +1,6 @@
+*.png
+*.tmp
+*.buf
+*.txt
+main
+extras.c
