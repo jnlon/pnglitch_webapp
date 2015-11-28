@@ -7,7 +7,6 @@
 #include "library_helpers.h"
 #include "debug.h"
 
-
 void my_init_zlib(z_stream *s) {
   s->zalloc = Z_NULL;
   s->zfree = Z_NULL;

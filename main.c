@@ -53,7 +53,7 @@ void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, short filt
   }
 }
 
-BYTE *zip_idats(BYTE *raw_data, ulong data_len, FILE* fp) {
+BYTE *zip_idats(BYTE *raw_data, ulong data_len, long *compressed_length) {
 
   //printf("Taking in buffer uncompressed buffer size  %ld\n", data_len);
 
@@ -105,8 +105,13 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, FILE* fp) {
 
     zipped_idats = realloc(zipped_idats, deflate_stream.total_out);
     printf("Decompressed %ld to size buffer size %ld\n", data_len, deflate_stream.total_out);
+
+    *compressed_length = deflate_stream.total_out;
+
+    deflateEnd(&deflate_stream);
+    free(raw_data); raw_data = NULL;
+
     return(zipped_idats);
-    //free(raw_data);
     //dump_buf_to_file("ZIPPED.buf", zipped_idats, deflate_stream.total_out);
 }
 
@@ -270,15 +275,15 @@ int main(int argc, char* argv[]) {
 
       int ret;
 
-      BYTE *bytes_out = (BYTE*)calloc(0, 1); //Create new output buffer
+      BYTE *bytes_out = (BYTE*)calloc(1, 1); //Create new output buffer
+      long out_buf_len = 1;
 
-      long out_buf_len = 0;
       long bytes_uncompressed = 0; //Actual number of uncompressed bytes
 
       inflate_stream.next_in = in_chunk_bytes; //tell inflater its input buffer
       inflate_stream.avail_in = chunk_len; //tell inflater its input size
 
-      //TODO: Convert from append_bufs
+      //TODO: Convert from append_bytes
       do { 
 
         //tell inflater where to write, how much room
@@ -309,7 +314,7 @@ int main(int argc, char* argv[]) {
         if (ret == Z_DATA_ERROR ||
             ret == Z_BUF_ERROR ||
             inflate_stream.avail_out <= 0) { //needs bigger buffer
-           out_buf_len += chunk_len/10;
+           out_buf_len += chunk_len*2;
            //printf("Setting bigger inflate buffer (%ld)\n", out_buf_len);
            bytes_out = realloc(bytes_out, out_buf_len);
            continue;
@@ -343,18 +348,18 @@ int main(int argc, char* argv[]) {
   //print_int_x_bytes(UNZIPPED_IDATS_BUF,UNZIPPED_IDATS_LEN);
   printf("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN);
 
-
   glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, 0);
 
   printf("#### Stage 3: Glitch complete ####\n");
 
   //dump_buf_to_file("UNZIPPED.buf", UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
-  BYTE *ZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, NULL);
-  free(UNZIPPED_IDATS_BUF);
+  long REZIPPED_IDATS_LEN = 0;
+  BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
+  //free(UNZIPPED_IDATS_BUF);
 
-  //printf("#### Stage 4: Write to File complete ####\n");
+  printf("#### Stage 4: Compress idats complete ####\n");
 
-  free(ZIPPED_IDATS);
+  free(REZIPPED_IDATS);
   inflateEnd(&inflate_stream);
 
   return 0;
