@@ -57,6 +57,26 @@ void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter
   }
 }
 
+
+void glitch_random(BYTE *data, ulonglong data_len, uint scanline_len, double freq) {
+      
+  srand(84677210);
+  
+  long glitches = (long) (((double) data_len) * freq);
+
+      // The plus one includes the filter byte
+      for (uint32_t i = 0; i < glitches; i++) {
+
+              uint64_t spot = ((rand() << 31) | rand())%data_len;
+
+              // Protects filter byte from being overwritten
+              if ((spot % scanline_len) == 0)
+                      continue;
+
+              data[spot] = rand()%256;
+      }
+}
+
 BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
   //printf("Taking in buffer uncompressed buffer size  %ld\n", data_len);
@@ -220,6 +240,13 @@ int main(int argc, char* argv[]) {
   void *write_io_ptr = png_get_io_ptr(pm->write_ptr);
   png_set_write_fn(pm->write_ptr, write_io_ptr, my_png_write_fn, my_png_dummy_flush);
 
+  png_set_filter(pm->write_ptr, 0,
+              PNG_FILTER_NONE  | PNG_FILTER_VALUE_NONE |
+              PNG_FILTER_SUB   | PNG_FILTER_VALUE_SUB  |
+              PNG_FILTER_UP    | PNG_FILTER_VALUE_UP   |
+              PNG_FILTER_AVG   | PNG_FILTER_VALUE_AVG  |
+              PNG_FILTER_PAETH | PNG_FILTER_VALUE_PAETH);
+
   //Using callback my_png_write_fn, output is written to ENTIRE_PNG_BUF
   //PNG_LENGTH will be updated too
   png_write_png(pm->write_ptr, pm->info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
@@ -332,17 +359,18 @@ int main(int argc, char* argv[]) {
 
   printf("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN);
 
+  for (int ftype=0;ftype<6;ftype++) {
 
-  printf("#### Stage 3: Glitch complete ####\n");
-
-  for (int ftype=0;ftype<5;ftype++) {
-
-    glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, ftype);
+    switch(ftype) {
+      case 5:
+        glitch_random(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, .0005);
+      break;
+      default:
+        glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, ftype);
+    }
 
     uint32_t REZIPPED_IDATS_LEN = 0;
     BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
-
-    printf("#### Stage 4: Compress idats complete ####\n");
 
     //Now write thing to file:
     // -Sig
