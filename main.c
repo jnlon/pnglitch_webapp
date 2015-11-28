@@ -5,48 +5,30 @@
 #include <zlib.h>
 #include <unistd.h>
 
-#define MAX_PNG_IN_BYTESIZE 10737418240 //10MB
-#define MAX_PNG_OUT_BYTESIZE 32212254720 //30MB
-#define IN_BUF_SIZE 1024
+#include "library_helpers.h"
+#include "common.h"
+#include "debug.h"
+
+
+//Globals, needed for callbacks
+long long MY_PNG_READ_OFFSET = 0;
+BYTE *ENTIRE_PNG_BUF;
+long long PNG_LENGTH = 0; 
 
 /*
- * As far as I can tell, libpng offers no way of accessing the filter type on a given row,
- * which is sad because it gives you pixel data THAT IS ALREADY FILTERED. 
- *
- *Plan B: 
  * Use Libpng to tansform the input into into RGB format 
  * (basically re-encode image using all filter methods)
  * Using the write-callback method, store this data in a shared buffer.
- * Then, glitch this buffer to hell java-pnglitch-style
- *
- * Step 1: Basically, port pnglitch-java to c (hello zlib!)
- * Step 2: Use libpng's transform functions to make 
- *         image the most glitchable, save this to buffer
- * Step 3: Run pnglitch-port on buffer
- *
+ * Then, glitch this buffer manually
  *
  * TODO: 
- * How to give a raw buffer to libpng as an image?
- *  -> Use this to handle getting image size / etc
- *  -> OFC conversion stuff too
+ * -Set no compression when writing image to buffer
  *
  */
 
-typedef unsigned char BYTE;
-typedef unsigned int uint;
-typedef unsigned long ulong;
-typedef unsigned long long ulonglong;
-
 BYTE IDAT_HDR_BYTES[] = {73, 68, 65, 84};
-BYTE IHDR_HDR_BYTES[] = {73, 68, 65, 84};
+BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
 BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
-
-//For Reading
-long long MY_PNG_READ_OFFSET = 0;
-
-//Need to be global for custom libpng write/read fns
-BYTE *ENTIRE_PNG_BUF;
-long long PNG_LENGTH = 0; //ALso used for writing
 
 struct ihdr_infos {
   uint width;
@@ -57,167 +39,6 @@ struct ihdr_infos {
   BYTE filter_method;
   BYTE interlace_method;
 };
-
-void get_x_bytes(long start, long len, BYTE* result, BYTE* data)  {
-  memcpy(result, &data[start], len);
-}
-
-void intTo4Bytes(uint i, BYTE *buf) {
-  buf[0] = ((i >> 24) & 0xFF);
-  buf[1] = ((i >> 16) & 0xFF);
-  buf[2] = ((i >> 8) & 0xFF);
-  buf[3] = (i & 0xFF);
-}
-
-uint _4bytesToInt(BYTE bb[]) {
-  uint b1 = bb[0] & 0x0000FF;
-  uint b2 = bb[1] & 0x0000FF;
-  uint b3 = bb[2] & 0x0000FF;
-  uint b4 = bb[3] & 0x0000FF;
-
-  return (uint)((b1 << 24) | (b2 << 16) | (b3 << 8) | b4);
-}
-
-
-typedef struct my_png_meta_s {
-  png_structp read_ptr;
-  png_structp write_ptr;
-  png_infop info_ptr;
-  png_infop end_info;
-} my_png_meta;
-
-void error(int code, char* obj, char* msg) {
-  printf("%s: %s\n", obj, msg);
-  exit(code);
-}
-
-void my_init_zlib(z_stream *s) {
-  s->zalloc = Z_NULL;
-  s->zfree = Z_NULL;
-  s->opaque = Z_NULL;
-  s->data_type = Z_BINARY;
-  s->avail_in = 0;
-}
-
-void append_bytes(BYTE *basebuf, BYTE *inbuf, int base_offset, int inbuf_length) {
-  BYTE* end_of_buf = basebuf + base_offset;
-  for (int i=0;i<inbuf_length;i++) {
-    end_of_buf[i] = inbuf[i];
-  }
-}
-
-//We don't need to flush, since we're just memcpying
-void my_png_dummy_flush(png_structp png_ptr) {
-  return;
-}
-
-void my_png_write_fn(png_structp png_ptr, png_bytep data, png_size_t length) {
-
-   //printf("writelen: %lu\n", length);
-
-   if (png_ptr == NULL)
-      return;
-
-   ENTIRE_PNG_BUF = realloc(ENTIRE_PNG_BUF, PNG_LENGTH + length);
-   
-   if (PNG_LENGTH > MAX_PNG_OUT_BYTESIZE)
-      png_error(png_ptr, "Write Error: Trying to realloc > 30MB");
-
-   append_bytes(ENTIRE_PNG_BUF, data, PNG_LENGTH, length);
-
-   PNG_LENGTH += length;
-
-}
-
-
-//This callback depends on a global MY_PNG_READ_OFFSET
-//to figure out what part of the buffer it should return.
-//The default png_read uses fread(), so this is handled automatically for them
-void my_png_read_fn(png_structp png_ptr, png_bytep data, png_size_t length) {
-
-   if (png_ptr == NULL)
-      return;
-
-   //printf("PNG_LENGTH: %lld\n", PNG_LENGTH);
-   //printf("MY_PNG_READ_OFFSET: %lld\n", MY_PNG_READ_OFFSET);
-   //printf("Trying to read: : %lu\n", length);
-   
-   if (MY_PNG_READ_OFFSET > PNG_LENGTH)
-      png_error(png_ptr, "Read Error: Trying to read past buffer bounds in callback");
-
-   get_x_bytes(MY_PNG_READ_OFFSET, length, data, png_ptr->io_ptr);
-   MY_PNG_READ_OFFSET += length;
-}
-
-
-void dump_buf_to_file(char* filename, BYTE *buf, long length) {
-
-  FILE *f = fopen(filename, "w");
-  long left = length;
-  long offset = 0;
-
-  while (left != 0) {
-    long writ = fwrite(buf+offset, sizeof(BYTE), left, f);
-    left -= writ;
-    offset += writ;
-  }
-
-  fclose(f);
-  printf("Writ %s\n",filename );
-}
-
-
-void my_init_libpng(my_png_meta *png_meta) {
-
-  png_structp png_read_ptr = 
-    png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
-
-  if (!png_read_ptr)
-    error(-1, "libpng", "cannot init libpng read struct");
-
-  png_infop info_ptr = png_create_info_struct(png_read_ptr);
-
-  if (!info_ptr) {
-    png_destroy_read_struct(&png_read_ptr, (png_infopp)NULL, (png_infopp)NULL);
-    error(-1, "libpng", "cannot init libpng info struct");
-  }
-
-  png_infop end_info = png_create_info_struct(png_read_ptr);
-
-  if (!end_info) {
-    png_destroy_read_struct(&png_read_ptr, &info_ptr, (png_infopp)NULL);
-    error(-1, "libpng", "cannot init libpng end info struct");
-  }
-
-  //write pointer
-  png_structp png_write_ptr = png_create_write_struct
-    (PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
-     NULL, NULL);
-
-  if (!png_write_ptr)
-    error(-1, "libpng", "Could not initialize write pointer");
-
-  if (setjmp(png_jmpbuf(png_read_ptr))) {
-    png_destroy_read_struct(&png_read_ptr, &info_ptr, &end_info);
-    error(-1, "libpng", "setjmp error");
-  }
-  
-  png_meta->write_ptr = png_write_ptr;
-  png_meta->read_ptr = png_read_ptr;
-  png_meta->info_ptr = info_ptr;
-  png_meta->end_info = end_info;
-
-}
-
-void print_int_bytes(BYTE *buf, int x) {
-  for (int i=0;i<x;i++)
-    printf("%d ", buf[i]);
-}
-
-void print_chr_bytes(BYTE *buf, int x) {
-  for (int i=0;i<x;i++)
-    putchar(buf[i]);
-}
 
 //Takes uncompressed concated IDAT buffer
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, short filter) {
@@ -302,21 +123,19 @@ int main(int argc, char* argv[]) {
   if (png_sig_cmp(sig, 0, 8) != 0)
     error(-1, filename, "not a PNG file");
 
-  //Take at max a 10 MB png
   long sz = 0;
   long INDX = 0;
   ENTIRE_PNG_BUF = calloc(1, 1);
   BYTE tmpbuff[IN_BUF_SIZE];
   bzero(tmpbuff, IN_BUF_SIZE);
   
-  //This will read from stdin? See fastcgi spec
+  //This will read max 10MB from stdin? See fastcgi spec
   while ((sz = fread(tmpbuff, 1, IN_BUF_SIZE, fp)) != 0) {
     PNG_LENGTH += sz;
 
     if (PNG_LENGTH >= MAX_PNG_IN_BYTESIZE)
       error(1, "input", "read too much!");
     
-
     ENTIRE_PNG_BUF = realloc(ENTIRE_PNG_BUF, PNG_LENGTH);
     append_bytes(ENTIRE_PNG_BUF, tmpbuff, PNG_LENGTH-sz, sz);
   }
