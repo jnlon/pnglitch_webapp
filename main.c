@@ -30,27 +30,32 @@ BYTE IDAT_HDR_BYTES[] = {73, 68, 65, 84};
 BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
 BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
 
-struct ihdr_infos {
-  uint width;
-  uint height;
-  BYTE bit_depth;
-  BYTE colour_type;
-  BYTE compression_method;
-  BYTE filter_method;
-  BYTE interlace_method;
+struct ihdr_infos_s {
+
+  ulong width;
+  ulong height;
+  ulong bit_depth;
+  ulong color_type;
+  ulong compression_type;
+  ulong filter_method;
+  ulong interlace_type;
+
+  ulong bytes_per_pixel;
+  ulong scanline_len;
+
 };
 
 //Takes uncompressed concated IDAT buffer
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, short filter) {
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    printf("Glitching offset %llu\n", i);
+    //printf("Glitching offset %llu\n", i);
     data[i] = filter;
   }
 }
 
-void write_idats_buffer(BYTE *raw_data, ulonglong data_len, FILE* fp) {
+BYTE *zip_idats(BYTE *raw_data, ulong data_len, FILE* fp) {
 
-  printf("Taking in buffer uncompressed buffer size  %lld\n", data_len);
+  //printf("Taking in buffer uncompressed buffer size  %ld\n", data_len);
 
   //Init a new compressing zlib
   int ret;
@@ -69,6 +74,7 @@ void write_idats_buffer(BYTE *raw_data, ulonglong data_len, FILE* fp) {
   deflate_stream.avail_in = data_len; 
 
       do { 
+        deflate_stream.next_in = raw_data; 
 
         deflate_stream.next_out = (zipped_idats + zipped_offset); 
         deflate_stream.avail_out = zipped_len - zipped_offset; 
@@ -77,8 +83,11 @@ void write_idats_buffer(BYTE *raw_data, ulonglong data_len, FILE* fp) {
 
         ret = deflate(&deflate_stream, Z_NO_FLUSH);
         
-        printf("ret: %d\n", ret);
-        printf("left: %u\n", deflate_stream.avail_in);
+        // Shrink buffer size as it's being read
+        raw_data = realloc(raw_data, data_len);
+        
+        //printf("ret: %d\n", ret);
+        //printf("left: %u\n", deflate_stream.avail_in);
 
         long last_deflate_len = deflate_stream.total_out - prevtotal;
         zipped_offset += last_deflate_len;
@@ -94,11 +103,11 @@ void write_idats_buffer(BYTE *raw_data, ulonglong data_len, FILE* fp) {
         }
       } while (deflate_stream.avail_in != 0);
 
-
     zipped_idats = realloc(zipped_idats, deflate_stream.total_out);
-    printf("Decompressed to size buffer size  %ld\n", deflate_stream.total_out);
+    printf("Decompressed %ld to size buffer size %ld\n", data_len, deflate_stream.total_out);
+    return(zipped_idats);
+    //free(raw_data);
     //dump_buf_to_file("ZIPPED.buf", zipped_idats, deflate_stream.total_out);
-
 }
 
 
@@ -149,25 +158,56 @@ int main(int argc, char* argv[]) {
   
   //Normally a file, but instead make it our buffer
   ps->read_ptr->io_ptr = ENTIRE_PNG_BUF;
-
   void *read_io_ptr = png_get_io_ptr(ps->read_ptr);
-
   png_set_read_fn(ps->read_ptr, read_io_ptr, my_png_read_fn);
 
   //Should convert all PNG image types to RGB
-  
   int transforms = 
     PNG_TRANSFORM_GRAY_TO_RGB |
     PNG_TRANSFORM_STRIP_ALPHA | 
     PNG_TRANSFORM_EXPAND;
 
   png_read_png(ps->read_ptr, ps->info_ptr, transforms, NULL);
-
+  
   //Now that its being read and transformed, its size will differ
   PNG_LENGTH = 0; 
 
-  void *write_io_ptr = png_get_io_ptr(ps->write_ptr);
+  //Lets collect our metadata
+  struct ihdr_infos_s ihdr_infos;
+  ihdr_infos.bit_depth        = png_get_bit_depth(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.color_type       = png_get_color_type(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.filter_method    = png_get_filter_type(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.compression_type = png_get_compression_type(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.interlace_type   = png_get_interlace_type(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.height           = png_get_image_height(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.width            = png_get_image_width(ps->read_ptr, ps->info_ptr);
 
+  if (ihdr_infos.color_type != 2)
+    error(1, "ihdr_infos", "Image was not correctly converted to RGB");
+
+  //Just in case we want to enable alpha, etc
+  switch(ihdr_infos.color_type) {
+    case 0:  //greyscale
+    case 3:  //indexed
+      ihdr_infos.bytes_per_pixel = 1;
+    break;
+    case 4: ihdr_infos.bytes_per_pixel = 2; break; //greyscale w/ alpha 
+    case 2: ihdr_infos.bytes_per_pixel = 3; break; //Truecolour (RGB)
+    case 6: ihdr_infos.bytes_per_pixel = 4; break; //Truecolour w/ alpha
+    default: error(1, "ihdr_infos", "Unknown image type"); 
+  }
+
+  ihdr_infos.scanline_len = ihdr_infos.bytes_per_pixel * ihdr_infos.width;
+
+  printf("HEIGHT: %lu\n", ihdr_infos.height);
+  printf("WIDTH: %lu\n", ihdr_infos.width);
+  printf("BIT_DEPTH: %lu\n", ihdr_infos.bit_depth);
+
+  // Don't compress, since we are merely copying it to memory,
+  // and will be decompressing it again anyway
+  png_set_compression_level(ps->write_ptr, Z_NO_COMPRESSION);
+
+  void *write_io_ptr = png_get_io_ptr(ps->write_ptr);
   png_set_write_fn(ps->write_ptr, write_io_ptr, my_png_write_fn, my_png_dummy_flush);
   png_write_png(ps->write_ptr, ps->info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
 
@@ -178,8 +218,14 @@ int main(int argc, char* argv[]) {
   png_destroy_read_struct(tmppngread, NULL, NULL);
   png_destroy_write_struct(tmppngwrite, tmppnginfo);
   free(ps);
-
   printf("Transformed buf is %lld bytes\n", PNG_LENGTH);
+
+  //Now that libpng is done converting the image, 
+  //and we have it in the buffer, lets process by hand with zlib
+  //
+  //Should we preserve bKGD, pHYS, tIME?
+
+  printf("#### Stage 1: Transform PNG complete ####\n");
 
   struct z_stream_s inflate_stream;
   my_init_zlib(&inflate_stream);
@@ -191,14 +237,15 @@ int main(int argc, char* argv[]) {
   //Get Header
   get_x_bytes(INDX, 4+13+4, IHDR_BYTES_BUF, ENTIRE_PNG_BUF);
 
-  print_int_bytes(IHDR_BYTES_BUF, 4+13+4);
-  exit(1);
+  INDX += 4+13+4; //Skip All of IHDR
 
+  //print_int_bytes(IHDR_BYTES_BUF, 4+13+4);
   BYTE *tmpbytes = calloc(4, 1);
 
   long long ZIPPED_IDATS_LEN = 0; //Length of all idats as we read them
   long long UNZIPPED_IDATS_LEN = 0; //Accumulator for unzipped idats length
-  BYTE *UNZIPPED_IDATS_BUF = (BYTE*)calloc(1, 1);
+  BYTE *UNZIPPED_IDATS_BUF = calloc(1, 1);
+  int chunk_count = 0;
 
   //We could get this to read directly from stdin stream
   while (INDX < PNG_LENGTH) {
@@ -208,6 +255,7 @@ int main(int argc, char* argv[]) {
     INDX += 4; //Skip over length
     get_x_bytes(INDX, 4, tmpbytes, ENTIRE_PNG_BUF);
 
+    chunk_count += 1;
     if (memcmp(tmpbytes, IDAT_HDR_BYTES, 4) == 0) {
 
       INDX += 4; //Skip over header
@@ -230,6 +278,7 @@ int main(int argc, char* argv[]) {
       inflate_stream.next_in = in_chunk_bytes; //tell inflater its input buffer
       inflate_stream.avail_in = chunk_len; //tell inflater its input size
 
+      //TODO: Convert from append_bufs
       do { 
 
         //tell inflater where to write, how much room
@@ -268,7 +317,6 @@ int main(int argc, char* argv[]) {
 
       } while (inflate_stream.avail_in != 0);
 
-
       //printf("####\n");
       //printf("Done uncompressing %ld bytes to %ld bytes\n", chunk_len, bytes_uncompressed);
       //printf("####\n");
@@ -280,47 +328,34 @@ int main(int argc, char* argv[]) {
       //printf("INDX: %ld\n", INDX);
 
     } else {
-      print_int_bytes(tmpbytes, 4); 
-      printf(" -- not IDAT\n");
+      printf("Chunk %d Not IDAT: ", chunk_count);
+      print_chr_bytes(tmpbytes, 4); 
+      putchar('\n');
       INDX += chunk_len + 8;
     }
   }
+  
+  free(ENTIRE_PNG_BUF);
+
+  printf("#### Stage 2: UNZIP transformed PNG complete ####\n");
 
   //printf("UNZIPPED_IDATS_LEN: %lldm\n", UNZIPPED_IDATS_LEN/1024/1024);
   //print_int_x_bytes(UNZIPPED_IDATS_BUF,UNZIPPED_IDATS_LEN);
   printf("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN);
 
-  printf("$$$$$$$$$$$$$$$$$$$$$$$$$$\n");
+
+  glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, 0);
+
+  printf("#### Stage 3: Glitch complete ####\n");
 
   //dump_buf_to_file("UNZIPPED.buf", UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
-  //write_idats_buffer(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, NULL);
-
-  free(ENTIRE_PNG_BUF);
+  BYTE *ZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, NULL);
   free(UNZIPPED_IDATS_BUF);
+
+  //printf("#### Stage 4: Write to File complete ####\n");
+
+  free(ZIPPED_IDATS);
   inflateEnd(&inflate_stream);
-
-  //png_init_io(png_meta.png_ptr, fp);
-  //png_read_info(png_meta.png_ptr, png_meta.info_ptr);
-
-  /*unsigned int height = png_get_image_height(png_meta.png_ptr, png_meta.info_ptr);
-  unsigned int width = png_get_image_width(png_meta.png_ptr, png_meta.info_ptr);
-
-  printf("Width: %u\n", width);
-  printf("Height: %u\n", height);
-
-  int channels = png_get_channels(png_meta.png_ptr, png_meta.info_ptr);
-  int rowbytes = png_get_rowbytes(png_meta.png_ptr, png_meta.info_ptr);
-  printf("Channels (bytes per pixel): %u\n", channels);
-  printf("Bytes per row: %u\n", rowbytes);
-
-  unsigned char row[rowbytes];
-
-  for  (int j=0;j<height;j++) {
-    png_read_row(png_meta.png_ptr, row, NULL);
-    for (int i=0;i<rowbytes;i++)
-      printf("%3u ", (unsigned int)row[i]);
-    printf("\n");
-  }*/
 
   return 0;
 }

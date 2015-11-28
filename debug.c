@@ -3,7 +3,7 @@
 #include <stdlib.h>
 
 void error(int code, char* obj, char* msg) {
-  printf("%s: %s\n", obj, msg);
+  fprintf(stderr,"%s: %s\n", obj, msg);
   exit(code);
 }
 
