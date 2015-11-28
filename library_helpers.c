@@ -54,7 +54,7 @@ void my_png_read_fn(png_structp png_ptr, png_bytep data, png_size_t length) {
    if (MY_PNG_READ_OFFSET > PNG_LENGTH)
       png_error(png_ptr, "Read Error: Trying to read past buffer bounds in callback");
 
-   get_x_bytes(MY_PNG_READ_OFFSET, length, data, png_ptr->io_ptr);
+   get_x_bytes(MY_PNG_READ_OFFSET, length, data, ENTIRE_PNG_BUF);
    MY_PNG_READ_OFFSET += length;
 }
 

@@ -1,5 +1,5 @@
 #include <png.h>
-#include <strings.h>
+#include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <zlib.h>
@@ -26,6 +26,7 @@ long long PNG_LENGTH = 0;
  *
  */
 
+BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10};
 BYTE IDAT_HDR_BYTES[] = {73, 68, 65, 84};
 BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
 BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
@@ -157,14 +158,12 @@ int main(int argc, char* argv[]) {
   printf("Buf is %lld bytes\n", PNG_LENGTH);
   fclose(fp);
 
-  my_png_meta *ps;
-  ps = calloc(1, sizeof(my_png_meta));
-  my_init_libpng(ps);
+  my_png_meta *pm = calloc(1, sizeof(my_png_meta));
+  my_init_libpng(pm);
   
   //Normally a file, but instead make it our buffer
-  ps->read_ptr->io_ptr = ENTIRE_PNG_BUF;
-  void *read_io_ptr = png_get_io_ptr(ps->read_ptr);
-  png_set_read_fn(ps->read_ptr, read_io_ptr, my_png_read_fn);
+  void *read_io_ptr = png_get_io_ptr(pm->read_ptr);
+  png_set_read_fn(pm->read_ptr, read_io_ptr, my_png_read_fn);
 
   //Should convert all PNG image types to RGB
   int transforms = 
@@ -172,20 +171,20 @@ int main(int argc, char* argv[]) {
     PNG_TRANSFORM_STRIP_ALPHA | 
     PNG_TRANSFORM_EXPAND;
 
-  png_read_png(ps->read_ptr, ps->info_ptr, transforms, NULL);
+  png_read_png(pm->read_ptr, pm->info_ptr, transforms, NULL);
   
   //Now that its being read and transformed, its size will differ
   PNG_LENGTH = 0; 
 
   //Lets collect our metadata
   struct ihdr_infos_s ihdr_infos;
-  ihdr_infos.bit_depth        = png_get_bit_depth(ps->read_ptr, ps->info_ptr);
-  ihdr_infos.color_type       = png_get_color_type(ps->read_ptr, ps->info_ptr);
-  ihdr_infos.filter_method    = png_get_filter_type(ps->read_ptr, ps->info_ptr);
-  ihdr_infos.compression_type = png_get_compression_type(ps->read_ptr, ps->info_ptr);
-  ihdr_infos.interlace_type   = png_get_interlace_type(ps->read_ptr, ps->info_ptr);
-  ihdr_infos.height           = png_get_image_height(ps->read_ptr, ps->info_ptr);
-  ihdr_infos.width            = png_get_image_width(ps->read_ptr, ps->info_ptr);
+  ihdr_infos.bit_depth        = png_get_bit_depth(pm->read_ptr, pm->info_ptr);
+  ihdr_infos.color_type       = png_get_color_type(pm->read_ptr, pm->info_ptr);
+  ihdr_infos.filter_method    = png_get_filter_type(pm->read_ptr, pm->info_ptr);
+  ihdr_infos.compression_type = png_get_compression_type(pm->read_ptr, pm->info_ptr);
+  ihdr_infos.interlace_type   = png_get_interlace_type(pm->read_ptr, pm->info_ptr);
+  ihdr_infos.height           = png_get_image_height(pm->read_ptr, pm->info_ptr);
+  ihdr_infos.width            = png_get_image_width(pm->read_ptr, pm->info_ptr);
 
   if (ihdr_infos.color_type != 2)
     error(1, "ihdr_infos", "Image was not correctly converted to RGB");
@@ -209,25 +208,25 @@ int main(int argc, char* argv[]) {
   printf("BIT_DEPTH: %lu\n", ihdr_infos.bit_depth);
 
   // Don't compress, since we are merely copying it to memory,
-  // and will be decompressing it again anyway
-  png_set_compression_level(ps->write_ptr, Z_NO_COMPRESSION);
+  // we  will be decompressing it again anyway
+  png_set_compression_level(pm->write_ptr, Z_NO_COMPRESSION);
 
-  void *write_io_ptr = png_get_io_ptr(ps->write_ptr);
-  png_set_write_fn(ps->write_ptr, write_io_ptr, my_png_write_fn, my_png_dummy_flush);
-  png_write_png(ps->write_ptr, ps->info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
+  void *write_io_ptr = png_get_io_ptr(pm->write_ptr);
+  png_set_write_fn(pm->write_ptr, write_io_ptr, my_png_write_fn, my_png_dummy_flush);
 
-  png_structp *tmppngread = &ps->read_ptr;
-  png_structp *tmppngwrite = &ps->write_ptr;
-  png_infop *tmppnginfo= &ps->info_ptr;
+  //Using callback my_png_write_fn, output is written to ENTIRE_PNG_BUF
+  //PNG_LENGTH will be updated too
+  png_write_png(pm->write_ptr, pm->info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
 
-  png_destroy_read_struct(tmppngread, NULL, NULL);
-  png_destroy_write_struct(tmppngwrite, tmppnginfo);
-  free(ps);
+  png_destroy_read_struct(&pm->read_ptr, NULL, NULL);
+  png_destroy_write_struct(&pm->write_ptr, &pm->info_ptr);
+  free(pm);
+
   printf("Transformed buf is %lld bytes\n", PNG_LENGTH);
 
   //Now that libpng is done converting the image, 
   //and we have it in the buffer, lets process by hand with zlib
-  //
+  
   //Should we preserve bKGD, pHYS, tIME?
 
   printf("#### Stage 1: Transform PNG complete ####\n");
@@ -244,7 +243,6 @@ int main(int argc, char* argv[]) {
 
   INDX += 4+13+4; //Skip All of IHDR
 
-  //print_int_bytes(IHDR_BYTES_BUF, 4+13+4);
   BYTE *tmpbytes = calloc(4, 1);
 
   long long ZIPPED_IDATS_LEN = 0; //Length of all idats as we read them
@@ -255,12 +253,16 @@ int main(int argc, char* argv[]) {
   //We could get this to read directly from stdin stream
   while (INDX < PNG_LENGTH) {
     
+    //Get the chunk length
     get_x_bytes(INDX, 4, tmpbytes, ENTIRE_PNG_BUF);
+    INDX += 4; 
     long chunk_len = _4bytesToInt(tmpbytes);
-    INDX += 4; //Skip over length
+
+    //Now, what is the header name?
     get_x_bytes(INDX, 4, tmpbytes, ENTIRE_PNG_BUF);
 
     chunk_count += 1;
+
     if (memcmp(tmpbytes, IDAT_HDR_BYTES, 4) == 0) {
 
       INDX += 4; //Skip over header
@@ -355,9 +357,17 @@ int main(int argc, char* argv[]) {
   //dump_buf_to_file("UNZIPPED.buf", UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
   long REZIPPED_IDATS_LEN = 0;
   BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
-  //free(UNZIPPED_IDATS_BUF);
 
   printf("#### Stage 4: Compress idats complete ####\n");
+
+  //Now write thing to file:
+  // -Sig
+  // -IHDR
+  // -[optional: others?]
+  // -Idats
+  // -IEND
+
+
 
   free(REZIPPED_IDATS);
   inflateEnd(&inflate_stream);
