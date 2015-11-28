@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <zlib.h>
 #include <unistd.h>
+#include <stdint.h>
+#include <arpa/inet.h>
 
 #include "library_helpers.h"
 #include "common.h"
@@ -26,7 +28,8 @@ long long PNG_LENGTH = 0;
  *
  */
 
-BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10};
+BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //8
+BYTE PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //12
 BYTE IDAT_HDR_BYTES[] = {73, 68, 65, 84};
 BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
 BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
@@ -47,14 +50,14 @@ struct ihdr_infos_s {
 };
 
 //Takes uncompressed concated IDAT buffer
-void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, short filter) {
+void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    //printf("Glitching offset %llu\n", i);
+    printf("Glitching offset %llu -> %d\n", i, data[i]);
     data[i] = filter;
   }
 }
 
-BYTE *zip_idats(BYTE *raw_data, ulong data_len, long *compressed_length) {
+BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
   //printf("Taking in buffer uncompressed buffer size  %ld\n", data_len);
 
@@ -62,67 +65,73 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, long *compressed_length) {
   int ret;
   struct z_stream_s deflate_stream;
   my_init_zlib(&deflate_stream);
-  ret = deflateInit(&deflate_stream, Z_DEFAULT_COMPRESSION);
+  ret = deflateInit(&deflate_stream, Z_NO_COMPRESSION);
   if (ret != Z_OK) 
     error(-1, "zlib deflate init", "ret != Z_OK");
 
+  //print_int_bytes(raw_data, data_len);
+  //exit(1);
+
   //This grows
   long zipped_offset = 0;
-  long zipped_len = 1;
-  BYTE *zipped_idats = (BYTE*)calloc(1, zipped_len);
+  long zipped_len = 1000;
+  printf("GOING IN: %lu\n", data_len);
+  BYTE *zipped_idats = (BYTE*)calloc(zipped_len, 1);
 
   deflate_stream.next_in = raw_data; 
   deflate_stream.avail_in = data_len; 
-
-      do { 
-        deflate_stream.next_in = raw_data; 
+      do {  // This compresses
+        //deflate_stream.next_in = raw_data; 
 
         deflate_stream.next_out = (zipped_idats + zipped_offset); 
         deflate_stream.avail_out = zipped_len - zipped_offset; 
 
         long prevtotal = deflate_stream.total_out;
 
-        ret = deflate(&deflate_stream, Z_NO_FLUSH);
+        //printf("avail_out1: %u\n", deflate_stream.avail_out);
+        ret = deflate(&deflate_stream, Z_FINISH);
+        //printf("avail_out2: %u\n", deflate_stream.avail_out);
         
         // Shrink buffer size as it's being read
-        raw_data = realloc(raw_data, data_len);
+        //raw_data = realloc(raw_data, deflate_stream.avail_in);
         
-        //printf("ret: %d\n", ret);
-        //printf("left: %u\n", deflate_stream.avail_in);
-
         long last_deflate_len = deflate_stream.total_out - prevtotal;
         zipped_offset += last_deflate_len;
+
+        if (ret == Z_STREAM_END)
+          break;
 
          //needs bigger buffer
         if (ret == Z_DATA_ERROR ||
             ret == Z_BUF_ERROR  ||
-            deflate_stream.avail_out <= 0) 
+            ((ret == Z_OK) && deflate_stream.avail_out == 0)) 
         {
            zipped_len = (zipped_len*2) + 1;
            printf("Setting bigger buffer (%ld)\n", zipped_len);
            zipped_idats = realloc(zipped_idats, zipped_len);
+           continue;
         }
-      } while (deflate_stream.avail_in != 0);
+      } while (1);
 
     zipped_idats = realloc(zipped_idats, deflate_stream.total_out);
-    printf("Decompressed %ld to size buffer size %ld\n", data_len, deflate_stream.total_out);
+    printf("Compressed %ld size buffer to %ld\n", data_len, deflate_stream.total_out);
 
     *compressed_length = deflate_stream.total_out;
 
     deflateEnd(&deflate_stream);
+
     free(raw_data); raw_data = NULL;
 
     return(zipped_idats);
-    //dump_buf_to_file("ZIPPED.buf", zipped_idats, deflate_stream.total_out);
 }
 
 
 int main(int argc, char* argv[]) {
 
-  char *filename = "3row.png";
+  if (argc <= 1)
+    error(1,"input", "need filename");
 
-  if (argc > 1)
-    filename = argv[1];
+  char *filename = argv[1];
 
   printf("Input is '%s'\n", filename);
   FILE *fp = fopen(filename, "rb");
@@ -201,7 +210,7 @@ int main(int argc, char* argv[]) {
     default: error(1, "ihdr_infos", "Unknown image type"); 
   }
 
-  ihdr_infos.scanline_len = ihdr_infos.bytes_per_pixel * ihdr_infos.width;
+  ihdr_infos.scanline_len = (ihdr_infos.bytes_per_pixel * ihdr_infos.width) + 1;
 
   printf("HEIGHT: %lu\n", ihdr_infos.height);
   printf("WIDTH: %lu\n", ihdr_infos.width);
@@ -246,9 +255,11 @@ int main(int argc, char* argv[]) {
   BYTE *tmpbytes = calloc(4, 1);
 
   long long ZIPPED_IDATS_LEN = 0; //Length of all idats as we read them
-  long long UNZIPPED_IDATS_LEN = 0; //Accumulator for unzipped idats length
   BYTE *UNZIPPED_IDATS_BUF = calloc(1, 1);
   int chunk_count = 0;
+
+  long out_buf_len = 1;
+  long out_buf_offset = 0;
 
   //We could get this to read directly from stdin stream
   while (INDX < PNG_LENGTH) {
@@ -273,62 +284,35 @@ int main(int argc, char* argv[]) {
       bzero(in_chunk_bytes, chunk_len);
       get_x_bytes(INDX, chunk_len, in_chunk_bytes, ENTIRE_PNG_BUF);
 
-      //printf("%ld\n", chunk_len);
-
-      int ret;
-
-      BYTE *bytes_out = (BYTE*)calloc(1, 1); //Create new output buffer
-      long out_buf_len = 1;
-
-      long bytes_uncompressed = 0; //Actual number of uncompressed bytes
+      UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, out_buf_len);
 
       inflate_stream.next_in = in_chunk_bytes; //tell inflater its input buffer
       inflate_stream.avail_in = chunk_len; //tell inflater its input size
 
-      //TODO: Convert from append_bytes
-      do { 
+      do {  //Uncompress this idat chunk
 
         //tell inflater where to write, how much room
-        inflate_stream.next_out = bytes_out; 
-        inflate_stream.avail_out = out_buf_len; 
+        inflate_stream.next_out = UNZIPPED_IDATS_BUF + out_buf_offset; 
+        inflate_stream.avail_out = out_buf_len - out_buf_offset; 
 
         long prevtotal = inflate_stream.total_out;
-        ret = inflate(&inflate_stream, Z_FULL_FLUSH);
-
-        /*
-        printf("out len: %ld\n", out_buf_len);
-        printf("%d\n", ret);
-        printf("avail_in: %u\n", inflate_stream.avail_in);
-        printf("avail_out: %u\n", inflate_stream.avail_out);
-        printf("total_out: %lu\n", inflate_stream.total_out);
-        */
+        int ret = inflate(&inflate_stream, Z_NO_FLUSH);
+        //printf("%d\n",ret);
 
         long last_inflate_len = inflate_stream.total_out - prevtotal;
-        bytes_uncompressed += last_inflate_len;
-        UNZIPPED_IDATS_LEN += last_inflate_len;
-
-        //append the newly uncompressed buffer to UNZIPPED_IDATS_BUF
-        UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
-        append_bytes(UNZIPPED_IDATS_BUF, bytes_out, UNZIPPED_IDATS_LEN-last_inflate_len, last_inflate_len);
-
-        //usleep(5000);
+        out_buf_offset += last_inflate_len;
 
         if (ret == Z_DATA_ERROR ||
             ret == Z_BUF_ERROR ||
-            inflate_stream.avail_out <= 0) { //needs bigger buffer
-           out_buf_len += chunk_len*2;
-           //printf("Setting bigger inflate buffer (%ld)\n", out_buf_len);
-           bytes_out = realloc(bytes_out, out_buf_len);
+            inflate_stream.avail_out <= 0) //needs bigger buffer
+        { 
+           out_buf_len = (out_buf_len*2) + 1;
+           UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, out_buf_len);
            continue;
         }
 
       } while (inflate_stream.avail_in != 0);
 
-      //printf("####\n");
-      //printf("Done uncompressing %ld bytes to %ld bytes\n", chunk_len, bytes_uncompressed);
-      //printf("####\n");
-
-      free(bytes_out);
       free(in_chunk_bytes);
       
       INDX += chunk_len + 4; //+ CRC
@@ -342,7 +326,10 @@ int main(int argc, char* argv[]) {
     }
   }
   
+  long long UNZIPPED_IDATS_LEN = inflate_stream.total_out; 
+  UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
   free(ENTIRE_PNG_BUF);
+  inflateEnd(&inflate_stream);
 
   printf("#### Stage 2: UNZIP transformed PNG complete ####\n");
 
@@ -355,7 +342,7 @@ int main(int argc, char* argv[]) {
   printf("#### Stage 3: Glitch complete ####\n");
 
   //dump_buf_to_file("UNZIPPED.buf", UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
-  long REZIPPED_IDATS_LEN = 0;
+  uint32_t REZIPPED_IDATS_LEN = 0;
   BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
 
   printf("#### Stage 4: Compress idats complete ####\n");
@@ -367,10 +354,26 @@ int main(int argc, char* argv[]) {
   // -Idats
   // -IEND
 
+  uint32_t ihdr_size = htonl(13);
+  uint32_t idat_len = htonl(REZIPPED_IDATS_LEN);
+  uint32_t idat_data_crc = crc32(0L, REZIPPED_IDATS, REZIPPED_IDATS_LEN); 
+  uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
+  uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, REZIPPED_IDATS_LEN));
 
+  FILE *f = fopen("OUT.png", "wb");
+
+  fwrite(PNG_SIGNATURE, 1, 8, f);
+  fwrite(&ihdr_size, sizeof(ihdr_size), 1, f);
+  fwrite(IHDR_BYTES_BUF, 1, 4+13+4, f);
+  fwrite(&idat_len, sizeof(idat_len), 1, f);
+  fwrite(IDAT_HDR_BYTES, 1, 4, f);
+  fwrite(REZIPPED_IDATS, 1, REZIPPED_IDATS_LEN, f);
+  fwrite(&idat_crc, sizeof(idat_crc), 1, f);
+  fwrite(PNG_IEND_CHUNK, 1, 12, f);
+
+  fclose(f);
 
   free(REZIPPED_IDATS);
-  inflateEnd(&inflate_stream);
 
   return 0;
 }
