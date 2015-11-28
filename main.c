@@ -69,9 +69,6 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
   if (ret != Z_OK) 
     error(-1, "zlib deflate init", "ret != Z_OK");
 
-  //print_int_bytes(raw_data, data_len);
-  //exit(1);
-
   //This grows
   long zipped_offset = 0;
   long zipped_len = 1000;
@@ -120,7 +117,7 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
     deflateEnd(&deflate_stream);
 
-    free(raw_data); raw_data = NULL;
+    //free(raw_data); raw_data = NULL;
 
     return(zipped_idats);
 }
@@ -333,47 +330,51 @@ int main(int argc, char* argv[]) {
 
   printf("#### Stage 2: UNZIP transformed PNG complete ####\n");
 
-  //printf("UNZIPPED_IDATS_LEN: %lldm\n", UNZIPPED_IDATS_LEN/1024/1024);
-  //print_int_x_bytes(UNZIPPED_IDATS_BUF,UNZIPPED_IDATS_LEN);
   printf("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN);
 
-  glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, 0);
 
   printf("#### Stage 3: Glitch complete ####\n");
 
-  //dump_buf_to_file("UNZIPPED.buf", UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
-  uint32_t REZIPPED_IDATS_LEN = 0;
-  BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
+  for (int ftype=0;ftype<5;ftype++) {
 
-  printf("#### Stage 4: Compress idats complete ####\n");
+    glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, ftype);
 
-  //Now write thing to file:
-  // -Sig
-  // -IHDR
-  // -[optional: others?]
-  // -Idats
-  // -IEND
+    uint32_t REZIPPED_IDATS_LEN = 0;
+    BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
 
-  uint32_t ihdr_size = htonl(13);
-  uint32_t idat_len = htonl(REZIPPED_IDATS_LEN);
-  uint32_t idat_data_crc = crc32(0L, REZIPPED_IDATS, REZIPPED_IDATS_LEN); 
-  uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
-  uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, REZIPPED_IDATS_LEN));
+    printf("#### Stage 4: Compress idats complete ####\n");
 
-  FILE *f = fopen("OUT.png", "wb");
+    //Now write thing to file:
+    // -Sig
+    // -IHDR
+    // -[optional: others?]
+    // -Idats
+    // -IEND
 
-  fwrite(PNG_SIGNATURE, 1, 8, f);
-  fwrite(&ihdr_size, sizeof(ihdr_size), 1, f);
-  fwrite(IHDR_BYTES_BUF, 1, 4+13+4, f);
-  fwrite(&idat_len, sizeof(idat_len), 1, f);
-  fwrite(IDAT_HDR_BYTES, 1, 4, f);
-  fwrite(REZIPPED_IDATS, 1, REZIPPED_IDATS_LEN, f);
-  fwrite(&idat_crc, sizeof(idat_crc), 1, f);
-  fwrite(PNG_IEND_CHUNK, 1, 12, f);
+    uint32_t ihdr_size = htonl(13);
+    uint32_t idat_len = htonl(REZIPPED_IDATS_LEN);
+    uint32_t idat_data_crc = crc32(0L, REZIPPED_IDATS, REZIPPED_IDATS_LEN); 
+    uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
+    uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, REZIPPED_IDATS_LEN));
 
-  fclose(f);
+    char filename[20];
+    snprintf(filename, 20, "OUT-%d.png", ftype);
 
-  free(REZIPPED_IDATS);
+    FILE *f = fopen(filename, "wb");
+
+    fwrite(PNG_SIGNATURE, 1, 8, f);
+    fwrite(&ihdr_size, sizeof(ihdr_size), 1, f);
+    fwrite(IHDR_BYTES_BUF, 1, 4+13+4, f);
+    fwrite(&idat_len, sizeof(idat_len), 1, f);
+    fwrite(IDAT_HDR_BYTES, 1, 4, f);
+    fwrite(REZIPPED_IDATS, 1, REZIPPED_IDATS_LEN, f);
+    fwrite(&idat_crc, sizeof(idat_crc), 1, f);
+    fwrite(PNG_IEND_CHUNK, 1, 12, f);
+
+    fclose(f);
+
+    free(REZIPPED_IDATS);
+  }
 
   return 0;
 }
