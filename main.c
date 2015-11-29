@@ -6,11 +6,12 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 #include "library_helpers.h"
 #include "common.h"
 #include "debug.h"
-
 
 //Globals, needed for callbacks
 long long MY_PNG_READ_OFFSET = 0;
@@ -22,9 +23,6 @@ long long PNG_LENGTH = 0;
  * (basically re-encode image using all filter methods)
  * Using the write-callback method, store this data in a shared buffer.
  * Then, glitch this buffer manually
- *
- * TODO: 
- * -Set no compression when writing image to buffer
  *
  */
 
@@ -52,7 +50,7 @@ struct ihdr_infos_s {
 //Takes uncompressed concated IDAT buffer
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    printf("Glitching offset %llu -> %d\n", i, data[i]);
+    //printf("Glitching offset %llu -> %d\n", i, data[i]);
     data[i] = filter;
   }
 }
@@ -79,20 +77,20 @@ void glitch_random(BYTE *data, ulonglong data_len, uint scanline_len, double fre
 
 BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
-  //printf("Taking in buffer uncompressed buffer size  %ld\n", data_len);
+  printf("Zipping glitched buffer length %ld\n", data_len);
 
   //Init a new compressing zlib
   int ret;
   struct z_stream_s deflate_stream;
   my_init_zlib(&deflate_stream);
-  ret = deflateInit(&deflate_stream, Z_NO_COMPRESSION);
+  ret = deflateInit(&deflate_stream, Z_DEFAULT_COMPRESSION);
   if (ret != Z_OK) 
     error(-1, "zlib deflate init", "ret != Z_OK");
 
   //This grows
   long zipped_offset = 0;
   long zipped_len = 1000;
-  printf("GOING IN: %lu\n", data_len);
+  //printf("GOING IN: %lu\n", data_len);
   BYTE *zipped_idats = (BYTE*)calloc(zipped_len, 1);
 
   deflate_stream.next_in = raw_data; 
@@ -109,9 +107,6 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
         ret = deflate(&deflate_stream, Z_FINISH);
         //printf("avail_out2: %u\n", deflate_stream.avail_out);
         
-        // Shrink buffer size as it's being read
-        //raw_data = realloc(raw_data, deflate_stream.avail_in);
-        
         long last_deflate_len = deflate_stream.total_out - prevtotal;
         zipped_offset += last_deflate_len;
 
@@ -124,7 +119,7 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
             ((ret == Z_OK) && deflate_stream.avail_out == 0)) 
         {
            zipped_len = (zipped_len*2) + 1;
-           printf("Setting bigger buffer (%ld)\n", zipped_len);
+           //printf("Setting bigger buffer (%ld)\n", zipped_len);
            zipped_idats = realloc(zipped_idats, zipped_len);
            continue;
         }
@@ -137,8 +132,6 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
     deflateEnd(&deflate_stream);
 
-    //free(raw_data); raw_data = NULL;
-
     return(zipped_idats);
 }
 
@@ -146,15 +139,25 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 int main(int argc, char* argv[]) {
 
   if (argc <= 1)
-    error(1,"input", "need filename");
+    error(1,"input", "need input filepath");
 
-  char *filename = argv[1];
+  char *infname = argv[1];
+  char *dot_p = strrchr(infname, '.');
+  dot_p = (dot_p == NULL) ? infname + strlen(infname) : dot_p ;
 
-  printf("Input is '%s'\n", filename);
-  FILE *fp = fopen(filename, "rb");
+  int dot_index = dot_p - infname;
+  char infname_sans_ext[dot_index+1];
+
+  memcpy(infname_sans_ext, infname, dot_index);
+  infname_sans_ext[dot_index] = '\0';
+
+  printf("Input is '%s'\n", infname);
+  printf("Input sans '%s'\n", infname_sans_ext);
+
+  FILE *fp = fopen(infname, "rb");
 
   if (fp == NULL) 
-    error(-1, filename, "cannot open file");
+    error(-1, infname, "cannot open file");
 
   unsigned char sig[8];
 
@@ -162,7 +165,7 @@ int main(int argc, char* argv[]) {
   fseek(fp, SEEK_SET, 0);
 
   if (png_sig_cmp(sig, 0, 8) != 0)
-    error(-1, filename, "not a PNG file");
+    error(-1, infname, "not a PNG file");
 
   long sz = 0;
   long INDX = 0;
@@ -359,6 +362,16 @@ int main(int argc, char* argv[]) {
 
   printf("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN);
 
+  char output_dir[] = "pnglitch_c_output";
+
+  int mkdir_ret = mkdir("pnglitch_c_output", S_IRWXU);
+
+  if (mkdir_ret == -1 && errno != EEXIST)
+    error(1, "problem creating directory", strerror(errno));
+  else if (access("pnglitch_c_output", W_OK | X_OK))
+    error(1, "Problem accessing directory", strerror(errno));
+
+
   for (int ftype=0;ftype<6;ftype++) {
 
     switch(ftype) {
@@ -372,6 +385,7 @@ int main(int argc, char* argv[]) {
     uint32_t REZIPPED_IDATS_LEN = 0;
     BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
 
+    
     //Now write thing to file:
     // -Sig
     // -IHDR
@@ -385,21 +399,21 @@ int main(int argc, char* argv[]) {
     uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
     uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, REZIPPED_IDATS_LEN));
 
-    char filename[20];
-    snprintf(filename, 20, "OUT-%d.png", ftype);
+    char outfilename[256];
+    snprintf(outfilename, 256, "%s/%s-%d.png", output_dir, infname_sans_ext, ftype);
 
-    FILE *f = fopen(filename, "wb");
+    FILE *outfp = fopen(outfilename, "wb");
 
-    fwrite(PNG_SIGNATURE, 1, 8, f);
-    fwrite(&ihdr_size, sizeof(ihdr_size), 1, f);
-    fwrite(IHDR_BYTES_BUF, 1, 4+13+4, f);
-    fwrite(&idat_len, sizeof(idat_len), 1, f);
-    fwrite(IDAT_HDR_BYTES, 1, 4, f);
-    fwrite(REZIPPED_IDATS, 1, REZIPPED_IDATS_LEN, f);
-    fwrite(&idat_crc, sizeof(idat_crc), 1, f);
-    fwrite(PNG_IEND_CHUNK, 1, 12, f);
+    fwrite(PNG_SIGNATURE, 1, 8, outfp);
+    fwrite(&ihdr_size, sizeof(ihdr_size), 1, outfp);
+    fwrite(IHDR_BYTES_BUF, 1, 4+13+4, outfp);
+    fwrite(&idat_len, sizeof(idat_len), 1, outfp);
+    fwrite(IDAT_HDR_BYTES, 1, 4, outfp);
+    fwrite(REZIPPED_IDATS, 1, REZIPPED_IDATS_LEN, outfp);
+    fwrite(&idat_crc, sizeof(idat_crc), 1, outfp);
+    fwrite(PNG_IEND_CHUNK, 1, 12, outfp);
 
-    fclose(f);
+    fclose(outfp);
 
     free(REZIPPED_IDATS);
   }
