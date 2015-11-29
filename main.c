@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <libgen.h>
 
 #include "library_helpers.h"
 #include "common.h"
@@ -48,6 +49,14 @@ struct ihdr_infos_s {
 };
 
 //Takes uncompressed concated IDAT buffer
+
+void glitch_random_filter(BYTE *data, ulonglong data_len, uint scanline_len) {
+  for (ulonglong i=0; i<data_len; i += scanline_len) {
+    //printf("Glitching offset %llu -> %d\n", i, data[i]);
+    data[i] = rand()%5;
+  }
+}
+
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
   for (ulonglong i=0; i<data_len; i += scanline_len) {
     //printf("Glitching offset %llu -> %d\n", i, data[i]);
@@ -57,22 +66,21 @@ void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter
 
 
 void glitch_random(BYTE *data, ulonglong data_len, uint scanline_len, double freq) {
-      
+
   srand(84677210);
-  
   long glitches = (long) (((double) data_len) * freq);
 
-      // The plus one includes the filter byte
-      for (uint32_t i = 0; i < glitches; i++) {
+  // The plus one includes the filter byte
+  for (uint32_t i = 0; i < glitches; i++) {
 
-              uint64_t spot = ((rand() << 31) | rand())%data_len;
+    uint64_t spot = ((rand() << 31) | rand())%data_len;
 
-              // Protects filter byte from being overwritten
-              if ((spot % scanline_len) == 0)
-                      continue;
+    // Protects filter byte from being overwritten
+    if ((spot % scanline_len) == 0)
+      continue;
 
-              data[spot] = rand()%256;
-      }
+    data[spot] = rand()%256;
+  }
 }
 
 BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
@@ -83,7 +91,7 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
   int ret;
   struct z_stream_s deflate_stream;
   my_init_zlib(&deflate_stream);
-  ret = deflateInit(&deflate_stream, Z_DEFAULT_COMPRESSION);
+  ret = deflateInit(&deflate_stream, Z_NO_COMPRESSION);//Z_DEFAULT_COMPRESSION);
   if (ret != Z_OK) 
     error(-1, "zlib deflate init", "ret != Z_OK");
 
@@ -91,7 +99,7 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
   long zipped_offset = 0;
   long zipped_len = 1000;
   //printf("GOING IN: %lu\n", data_len);
-  BYTE *zipped_idats = (BYTE*)calloc(zipped_len, 1);
+  BYTE *zipped_idats = calloc(zipped_len, 1);
 
   deflate_stream.next_in = raw_data; 
   deflate_stream.avail_in = data_len; 
@@ -136,28 +144,13 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 }
 
 
-int main(int argc, char* argv[]) {
+void begin(char* infname_sans_ext, FILE* fp) {
 
-  if (argc <= 1)
-    error(1,"input", "need input filepath");
-
-  char *infname = argv[1];
-  char *dot_p = strrchr(infname, '.');
-  dot_p = (dot_p == NULL) ? infname + strlen(infname) : dot_p ;
-
-  int dot_index = dot_p - infname;
-  char infname_sans_ext[dot_index+1];
-
-  memcpy(infname_sans_ext, infname, dot_index);
-  infname_sans_ext[dot_index] = '\0';
-
-  printf("Input is '%s'\n", infname);
-  printf("Input sans '%s'\n", infname_sans_ext);
-
-  FILE *fp = fopen(infname, "rb");
+  MY_PNG_READ_OFFSET = 0;
+  PNG_LENGTH = 0; 
 
   if (fp == NULL) 
-    error(-1, infname, "cannot open file");
+    error(-1, "fp", "cannot open file");
 
   unsigned char sig[8];
 
@@ -165,7 +158,7 @@ int main(int argc, char* argv[]) {
   fseek(fp, SEEK_SET, 0);
 
   if (png_sig_cmp(sig, 0, 8) != 0)
-    error(-1, infname, "not a PNG file");
+    error(-1, "fp", "not a PNG file");
 
   long sz = 0;
   long INDX = 0;
@@ -254,17 +247,16 @@ int main(int argc, char* argv[]) {
   //PNG_LENGTH will be updated too
   png_write_png(pm->write_ptr, pm->info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
 
-  png_destroy_read_struct(&pm->read_ptr, NULL, NULL);
+  png_destroy_read_struct(&pm->read_ptr, &pm->info_ptr, &pm->end_info);
   png_destroy_write_struct(&pm->write_ptr, &pm->info_ptr);
   free(pm);
 
   printf("Transformed buf is %lld bytes\n", PNG_LENGTH);
 
   //Now that libpng is done converting the image, 
-  //and we have it in the buffer, lets process by hand with zlib
+  //and we have it in the buffer, lets process it by hand with zlib
   
   //Should we preserve bKGD, pHYS, tIME?
-
   printf("#### Stage 1: Transform PNG complete ####\n");
 
   struct z_stream_s inflate_stream;
@@ -279,7 +271,7 @@ int main(int argc, char* argv[]) {
 
   INDX += 4+13+4; //Skip All of IHDR
 
-  BYTE *tmpbytes = calloc(4, 1);
+  BYTE tmpbytes[4];
 
   long long ZIPPED_IDATS_LEN = 0; //Length of all idats as we read them
   BYTE *UNZIPPED_IDATS_BUF = calloc(1, 1);
@@ -307,7 +299,7 @@ int main(int argc, char* argv[]) {
 
       ZIPPED_IDATS_LEN += chunk_len;
 
-      BYTE *in_chunk_bytes = (BYTE*)calloc(chunk_len, 1);
+      BYTE *in_chunk_bytes = calloc(chunk_len, 1);
       bzero(in_chunk_bytes, chunk_len);
       get_x_bytes(INDX, chunk_len, in_chunk_bytes, ENTIRE_PNG_BUF);
 
@@ -316,7 +308,8 @@ int main(int argc, char* argv[]) {
       inflate_stream.next_in = in_chunk_bytes; //tell inflater its input buffer
       inflate_stream.avail_in = chunk_len; //tell inflater its input size
 
-      do {  //Uncompress this idat chunk
+      //uncompress this idat
+      do { 
 
         //tell inflater where to write, how much room
         inflate_stream.next_out = UNZIPPED_IDATS_BUF + out_buf_offset; 
@@ -341,9 +334,7 @@ int main(int argc, char* argv[]) {
       } while (inflate_stream.avail_in != 0);
 
       free(in_chunk_bytes);
-      
       INDX += chunk_len + 4; //+ CRC
-      //printf("INDX: %ld\n", INDX);
 
     } else {
       printf("Chunk %d Not IDAT: ", chunk_count);
@@ -372,12 +363,15 @@ int main(int argc, char* argv[]) {
     error(1, "Problem accessing directory", strerror(errno));
 
 
-  for (int ftype=0;ftype<6;ftype++) {
+  for (int ftype=0;ftype<7;ftype++) {
 
     switch(ftype) {
       case 5:
         glitch_random(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, .0005);
-      break;
+        break;
+      case 6:
+        glitch_random_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len);
+        break;
       default:
         glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, ftype);
     }
@@ -385,7 +379,6 @@ int main(int argc, char* argv[]) {
     uint32_t REZIPPED_IDATS_LEN = 0;
     BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
 
-    
     //Now write thing to file:
     // -Sig
     // -IHDR
@@ -414,8 +407,35 @@ int main(int argc, char* argv[]) {
     fwrite(PNG_IEND_CHUNK, 1, 12, outfp);
 
     fclose(outfp);
-
     free(REZIPPED_IDATS);
+  }
+  free(UNZIPPED_IDATS_BUF);
+}
+
+
+int main(int argc, char* argv[]) {
+
+  if (argc <= 1)
+    error(1,"input", "need input filepath");
+
+
+  for (int i=1;i<argc;i++) {
+
+    char *infname = argv[i];
+    char *infbasename = basename(argv[i]);
+    char *dot_p = strrchr(infbasename, '.');
+    dot_p = (dot_p == NULL) ? infbasename + strlen(infbasename) : dot_p ;
+
+    int dot_index = dot_p - infbasename;
+    char infname_sans_ext[dot_index+1];
+
+    memcpy(infname_sans_ext, infbasename, dot_index);
+    infname_sans_ext[dot_index] = '\0';
+
+    printf("Input Working on '%s' (base: '%s')\n", infname, infname_sans_ext);
+
+    FILE *infile = fopen(argv[i], "rb");
+    begin(infname_sans_ext, infile);
   }
 
   return 0;
