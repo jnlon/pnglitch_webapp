@@ -93,7 +93,7 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
   my_init_zlib(&deflate_stream);
   ret = deflateInit(&deflate_stream, Z_NO_COMPRESSION);//Z_DEFAULT_COMPRESSION);
   if (ret != Z_OK) 
-    error(-1, "zlib deflate init", "ret != Z_OK");
+    error_fatal(-1, "zlib deflate init", "ret != Z_OK");
 
   //This grows
   long zipped_offset = 0;
@@ -149,16 +149,20 @@ void begin(char* infname_sans_ext, FILE* fp) {
   MY_PNG_READ_OFFSET = 0;
   PNG_LENGTH = 0; 
 
-  if (fp == NULL) 
+  if (fp == NULL)  {
     error(-1, "fp", "cannot open file");
+    return;
+  }
 
   unsigned char sig[8];
 
   fread(sig, 1, 8, fp);
   fseek(fp, SEEK_SET, 0);
 
-  if (png_sig_cmp(sig, 0, 8) != 0)
+  if (png_sig_cmp(sig, 0, 8) != 0) {
     error(-1, "fp", "not a PNG file");
+    return;
+  }
 
   long sz = 0;
   long INDX = 0;
@@ -171,7 +175,7 @@ void begin(char* infname_sans_ext, FILE* fp) {
     PNG_LENGTH += sz;
 
     if (PNG_LENGTH >= MAX_PNG_IN_BYTESIZE)
-      error(1, "input", "read too much!");
+      error_fatal(1, "input", "read too much!");
     
     ENTIRE_PNG_BUF = realloc(ENTIRE_PNG_BUF, PNG_LENGTH);
     append_bytes(ENTIRE_PNG_BUF, tmpbuff, PNG_LENGTH-sz, sz);
@@ -209,7 +213,7 @@ void begin(char* infname_sans_ext, FILE* fp) {
   ihdr_infos.width            = png_get_image_width(pm->read_ptr, pm->info_ptr);
 
   if (ihdr_infos.color_type != 2)
-    error(1, "ihdr_infos", "Image was not correctly converted to RGB");
+    error_fatal(1, "ihdr_infos", "Image was not correctly converted to RGB");
 
   //Just in case we want to enable alpha, etc
   switch(ihdr_infos.color_type) {
@@ -220,7 +224,7 @@ void begin(char* infname_sans_ext, FILE* fp) {
     case 4: ihdr_infos.bytes_per_pixel = 2; break; //greyscale w/ alpha 
     case 2: ihdr_infos.bytes_per_pixel = 3; break; //Truecolour (RGB)
     case 6: ihdr_infos.bytes_per_pixel = 4; break; //Truecolour w/ alpha
-    default: error(1, "ihdr_infos", "Unknown image type"); 
+    default: error_fatal(1, "ihdr_infos", "Unknown image type"); 
   }
 
   ihdr_infos.scanline_len = (ihdr_infos.bytes_per_pixel * ihdr_infos.width) + 1;
@@ -358,9 +362,9 @@ void begin(char* infname_sans_ext, FILE* fp) {
   int mkdir_ret = mkdir("pnglitch_c_output", S_IRWXU);
 
   if (mkdir_ret == -1 && errno != EEXIST)
-    error(1, "problem creating directory", strerror(errno));
+    error_fatal(1, "problem creating directory", strerror(errno));
   else if (access("pnglitch_c_output", W_OK | X_OK))
-    error(1, "Problem accessing directory", strerror(errno));
+    error_fatal(1, "Problem accessing directory", strerror(errno));
 
 
   for (int ftype=0;ftype<7;ftype++) {
@@ -416,8 +420,7 @@ void begin(char* infname_sans_ext, FILE* fp) {
 int main(int argc, char* argv[]) {
 
   if (argc <= 1)
-    error(1,"input", "need input filepath");
-
+    error_fatal(1,"input", "need input filepath");
 
   for (int i=1;i<argc;i++) {
 

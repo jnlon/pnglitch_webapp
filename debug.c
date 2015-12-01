@@ -2,9 +2,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void error(int code, char* obj, char* msg) {
+void error_fatal(int code, char* obj, char* msg) {
   fprintf(stderr,"%s: %s\n", obj, msg);
   exit(code);
+}
+
+void error(int code, char* obj, char* msg) {
+  fprintf(stderr,"%s: %s\n", obj, msg);
 }
 
 void dump_buf_to_file(char* filename, BYTE *buf, long length) {
