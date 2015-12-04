@@ -1,7 +1,8 @@
+#define _GNU_SOURCE
 #include <png.h>
 #include <string.h>
 #include <stdlib.h>
-#include <stdio.h>
+#include <fcgi_stdio.h>
 #include <zlib.h>
 #include <unistd.h>
 #include <stdint.h>
@@ -11,6 +12,7 @@
 #include <libgen.h>
 
 #include "library_helpers.h"
+#include "fcgi_helpers.h"
 #include "common.h"
 #include "debug.h"
 
@@ -144,34 +146,25 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 }
 
 
-void begin(char* infname_sans_ext, FILE* fp) {
+void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
   MY_PNG_READ_OFFSET = 0;
-  PNG_LENGTH = 0; 
+  PNG_LENGTH = png_length; 
+  ENTIRE_PNG_BUF = png_buf;
 
-  if (fp == NULL)  {
-    error(-1, "fp", "cannot open file");
+  if (png_sig_cmp(png_buf, 0, 8) != 0) {
+    error(-1, "png_buf", "not PNG data");
     return;
   }
 
-  unsigned char sig[8];
-
-  fread(sig, 1, 8, fp);
-  fseek(fp, SEEK_SET, 0);
-
-  if (png_sig_cmp(sig, 0, 8) != 0) {
-    error(-1, "fp", "not a PNG file");
-    return;
-  }
-
-  long sz = 0;
+  /*long sz = 0;*/
   long INDX = 0;
-  ENTIRE_PNG_BUF = calloc(1, 1);
+  /*ENTIRE_PNG_BUF = calloc(1, 1);
   BYTE tmpbuff[IN_BUF_SIZE];
-  bzero(tmpbuff, IN_BUF_SIZE);
+  bzero(tmpbuff, IN_BUF_SIZE);*/
   
   //This will read max 10MB from stdin? See fastcgi spec
-  while ((sz = fread(tmpbuff, 1, IN_BUF_SIZE, fp)) != 0) {
+  /*while ((sz = fread(tmpbuff, 1, IN_BUF_SIZE, fp)) != 0) {
     PNG_LENGTH += sz;
 
     if (PNG_LENGTH >= MAX_PNG_IN_BYTESIZE)
@@ -179,10 +172,10 @@ void begin(char* infname_sans_ext, FILE* fp) {
     
     ENTIRE_PNG_BUF = realloc(ENTIRE_PNG_BUF, PNG_LENGTH);
     append_bytes(ENTIRE_PNG_BUF, tmpbuff, PNG_LENGTH-sz, sz);
-  }
+  }*/
 
   printf("Buf is %lld bytes\n", PNG_LENGTH);
-  fclose(fp);
+  //fclose(fp);
 
   my_png_meta *pm = calloc(1, sizeof(my_png_meta));
   my_init_libpng(pm);
@@ -419,26 +412,93 @@ void begin(char* infname_sans_ext, FILE* fp) {
 
 int main(int argc, char* argv[]) {
 
-  if (argc <= 1)
-    error_fatal(1,"input", "need input filepath");
+  while (FCGI_Accept() >= 0) {
 
-  for (int i=1;i<argc;i++) {
+    printf("content-type: text/plain\r\n\r\n");
 
-    char *infname = argv[i];
-    char *infbasename = basename(argv[i]);
-    char *dot_p = strrchr(infbasename, '.');
-    dot_p = (dot_p == NULL) ? infbasename + strlen(infbasename) : dot_p ;
+    char *CONTENT_LENGTH_C = getenv("CONTENT_LENGTH");
 
-    int dot_index = dot_p - infbasename;
-    char infname_sans_ext[dot_index+1];
+    if (CONTENT_LENGTH_C == NULL) {
+      printf("No content_length!!\n");
+      continue;
+    }
 
-    memcpy(infname_sans_ext, infbasename, dot_index);
-    infname_sans_ext[dot_index] = '\0';
+    long CONTENT_LENGTH = atol(CONTENT_LENGTH_C);
 
-    printf("Input Working on '%s' (base: '%s')\n", infname, infname_sans_ext);
+    if (CONTENT_LENGTH > MAX_CONTENT_LENGTH) {
+      printf("File too big!\n");
+      continue;
+    }
 
-    FILE *infile = fopen(argv[i], "rb");
-    begin(infname_sans_ext, infile);
+    if (CONTENT_LENGTH <= 0) {
+      printf("File too short!\n");
+      continue;
+    }
+
+    char form_boundary[300];
+    memset(form_boundary, 300, 1);
+
+    int form_boundary_len = get_form_boundary(form_boundary);
+
+    if (form_boundary_len <= 0) {
+      printf("get_form_boundary errored\n");
+      continue;
+    }
+
+    form_boundary[form_boundary_len] = '\0';
+
+    char* form_meta_buf = calloc(MAX_FORM_META_LENGTH, 1);
+    int form_meta_buf_sz  = get_form_meta_buf(form_meta_buf);
+
+    if (form_meta_buf_sz <= 0) {
+      printf("get_form_meta_buf errored\n");
+      continue;
+    }
+
+    form_meta_buf = realloc(form_meta_buf, form_meta_buf_sz);
+
+    char form_filename[300];
+    memset(form_filename, 300, 1);
+
+    int filename_sz = get_form_filename(form_meta_buf, form_filename);
+    form_filename[filename_sz] = '\0';
+
+    //printf("%s\n", form_filename);
+
+    if (filename_sz <= 0 ) {
+      printf("get_form_filename errored\n");
+      continue;
+    }
+    
+    char* upload = calloc(CONTENT_LENGTH, 1);
+
+    for (int i=0;i<CONTENT_LENGTH;i++) {
+      char x = getc(stdin);
+      if (feof(stdin))
+        break;
+      upload[i] = x;
+    }
+
+    char *end_ptr = memmem(upload, CONTENT_LENGTH,  form_boundary, form_boundary_len);
+
+    if (end_ptr == NULL) {
+      printf("end_ptr not found\n");
+      continue;
+    }
+    
+    char *c = upload;
+    ulong png_length = 0;
+    BYTE *png_buf = calloc(CONTENT_LENGTH, 1);
+
+    //Now put this all in a buffer
+    while (c != end_ptr) {
+      //putchar(*c);
+      png_buf[png_length] = *c;
+      c++;
+      png_length++;
+    }
+
+    begin(form_filename, png_buf, png_length);
   }
 
   return 0;
