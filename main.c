@@ -29,14 +29,15 @@ long long PNG_LENGTH = 0;
  *
  */
 
-BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //8
-BYTE PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //12
+BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //len 8
+BYTE PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //len 12
 BYTE IDAT_HDR_BYTES[] = {73, 68, 65, 84};
 BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
 BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
 
 struct ihdr_infos_s {
 
+  //libpng provided
   ulong width;
   ulong height;
   ulong bit_depth;
@@ -45,6 +46,7 @@ struct ihdr_infos_s {
   ulong filter_method;
   ulong interlace_type;
 
+  //My own
   ulong bytes_per_pixel;
   ulong scanline_len;
 
@@ -97,16 +99,14 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
   if (ret != Z_OK) 
     error_fatal(-1, "zlib deflate init", "ret != Z_OK");
 
-  //This grows
   long zipped_offset = 0;
   long zipped_len = 1000;
-  //printf("GOING IN: %lu\n", data_len);
+  //This grows
   BYTE *zipped_idats = calloc(zipped_len, 1);
 
   deflate_stream.next_in = raw_data; 
   deflate_stream.avail_in = data_len; 
       do {  // This compresses
-        //deflate_stream.next_in = raw_data; 
 
         deflate_stream.next_out = (zipped_idats + zipped_offset); 
         deflate_stream.avail_out = zipped_len - zipped_offset; 
@@ -152,27 +152,12 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   PNG_LENGTH = png_length; 
   ENTIRE_PNG_BUF = png_buf;
 
-  if (png_sig_cmp(png_buf, 0, 8) != 0) {
+  if (png_sig_cmp(ENTIRE_PNG_BUF, 0, 8) != 0) {
     error(-1, "png_buf", "not PNG data");
     return;
   }
 
-  /*long sz = 0;*/
   long INDX = 0;
-  /*ENTIRE_PNG_BUF = calloc(1, 1);
-  BYTE tmpbuff[IN_BUF_SIZE];
-  bzero(tmpbuff, IN_BUF_SIZE);*/
-  
-  //This will read max 10MB from stdin? See fastcgi spec
-  /*while ((sz = fread(tmpbuff, 1, IN_BUF_SIZE, fp)) != 0) {
-    PNG_LENGTH += sz;
-
-    if (PNG_LENGTH >= MAX_PNG_IN_BYTESIZE)
-      error_fatal(1, "input", "read too much!");
-    
-    ENTIRE_PNG_BUF = realloc(ENTIRE_PNG_BUF, PNG_LENGTH);
-    append_bytes(ENTIRE_PNG_BUF, tmpbuff, PNG_LENGTH-sz, sz);
-  }*/
 
   printf("Buf is %lld bytes\n", PNG_LENGTH);
   //fclose(fp);
@@ -416,87 +401,50 @@ int main(int argc, char* argv[]) {
 
     printf("content-type: text/plain\r\n\r\n");
 
-    char *CONTENT_LENGTH_C = getenv("CONTENT_LENGTH");
+    long content_length = get_content_length();
 
-    if (CONTENT_LENGTH_C == NULL) {
-      printf("No content_length!!\n");
+    if (content_length <= 0)
       continue;
-    }
 
-    long CONTENT_LENGTH = atol(CONTENT_LENGTH_C);
-
-    if (CONTENT_LENGTH > MAX_CONTENT_LENGTH) {
-      printf("File too big!\n");
-      continue;
-    }
-
-    if (CONTENT_LENGTH <= 0) {
-      printf("File too short!\n");
-      continue;
-    }
-
-    char form_boundary[300];
-    memset(form_boundary, 300, 1);
+    char form_boundary[MAX_FORM_BOUNDARY_LENGTH];
+    memset(form_boundary, MAX_FORM_BOUNDARY_LENGTH, 1);
 
     int form_boundary_len = get_form_boundary(form_boundary);
 
-    if (form_boundary_len <= 0) {
-      printf("get_form_boundary errored\n");
+    if (form_boundary_len <= 0)
       continue;
-    }
 
     form_boundary[form_boundary_len] = '\0';
 
     char* form_meta_buf = calloc(MAX_FORM_META_LENGTH, 1);
     int form_meta_buf_sz  = get_form_meta_buf(form_meta_buf);
 
-    if (form_meta_buf_sz <= 0) {
-      printf("get_form_meta_buf errored\n");
+    if (form_meta_buf_sz <= 0)
       continue;
-    }
 
     form_meta_buf = realloc(form_meta_buf, form_meta_buf_sz);
 
-    char form_filename[300];
-    memset(form_filename, 300, 1);
+    char form_filename[MAX_FILENAME_LENGTH];
+    memset(form_filename, MAX_FILENAME_LENGTH, 1);
 
     int filename_sz = get_form_filename(form_meta_buf, form_filename);
     form_filename[filename_sz] = '\0';
 
-    //printf("%s\n", form_filename);
+    //printf("Filename of uploaded file: %s\n", form_filename);
 
-    if (filename_sz <= 0 ) {
-      printf("get_form_filename errored\n");
+    if (filename_sz <= 0 )
       continue;
-    }
     
-    char* upload = calloc(CONTENT_LENGTH, 1);
+    BYTE *png_buf = calloc(content_length, 1);
 
-    for (int i=0;i<CONTENT_LENGTH;i++) {
-      char x = getc(stdin);
-      if (feof(stdin))
-        break;
-      upload[i] = x;
-    }
+    ulong png_length = get_uploaded_file_buf(png_buf, content_length,
+        form_boundary, form_boundary_len);
+    png_buf = realloc(png_buf, png_length);
 
-    char *end_ptr = memmem(upload, CONTENT_LENGTH,  form_boundary, form_boundary_len);
+    printf("Size of uploaded png: %ld\n", png_length);
 
-    if (end_ptr == NULL) {
-      printf("end_ptr not found\n");
+    if (png_length <= 0)
       continue;
-    }
-    
-    char *c = upload;
-    ulong png_length = 0;
-    BYTE *png_buf = calloc(CONTENT_LENGTH, 1);
-
-    //Now put this all in a buffer
-    while (c != end_ptr) {
-      //putchar(*c);
-      png_buf[png_length] = *c;
-      c++;
-      png_length++;
-    }
 
     begin(form_filename, png_buf, png_length);
   }
