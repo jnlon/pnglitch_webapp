@@ -160,7 +160,6 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   long INDX = 0;
 
   printf("Buf is %lld bytes\n", PNG_LENGTH);
-  //fclose(fp);
 
   my_png_meta *pm = calloc(1, sizeof(my_png_meta));
   my_init_libpng(pm);
@@ -437,16 +436,19 @@ int main(int argc, char* argv[]) {
     
     BYTE *png_buf = calloc(content_length, 1);
 
-    ulong png_length = get_uploaded_file_buf(png_buf, content_length,
+    long png_length = get_uploaded_file_buf(png_buf, content_length,
         form_boundary, form_boundary_len);
-    png_buf = realloc(png_buf, png_length);
 
     printf("Size of uploaded png: %ld\n", png_length);
 
     if (png_length <= 0)
       continue;
 
+    png_buf = realloc(png_buf, png_length);
+
     begin(form_filename, png_buf, png_length);
+
+    free(form_meta_buf);
   }
 
   return 0;

@@ -73,6 +73,7 @@ int get_form_meta_buf(char* buf) {
     //Form meta stuff, should not be this long
     if (i > MAX_FORM_META_LENGTH) {
       printf("Past max meta length!\n");
+      free(buf);
       return -1;
     }
     i++;
@@ -81,7 +82,7 @@ int get_form_meta_buf(char* buf) {
   return i;
 }
 
-unsigned long get_uploaded_file_buf(unsigned char *upload, long content_length, 
+long get_uploaded_file_buf(unsigned char *upload, long content_length, 
     char *form_boundary, int form_boundary_len) {
 
   for (int i=0;i<content_length;i++) {
@@ -98,6 +99,7 @@ unsigned long get_uploaded_file_buf(unsigned char *upload, long content_length,
 
   if (end_ptr == NULL) {
     printf("Cannot find end-of-form boundary\n");
+    free(upload);
     return -1;
   }
 
