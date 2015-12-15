@@ -4,7 +4,6 @@
 #include <stdlib.h>
 #include <fcgi_stdio.h>
 #include <zlib.h>
-#include <unistd.h>
 #include <stdint.h>
 #include <arpa/inet.h>
 #include <sys/stat.h>
@@ -15,6 +14,7 @@
 #include "fcgi_helpers.h"
 #include "common.h"
 #include "debug.h"
+#include "web.h"
 
 //Globals, needed for callbacks
 long long MY_PNG_READ_OFFSET = 0;
@@ -26,7 +26,6 @@ long long PNG_LENGTH = 0;
  * (basically re-encode image using all filter methods)
  * Using the write-callback method, store this data in a shared buffer.
  * Then, glitch this buffer manually
- *
  */
 
 BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //len 8
@@ -36,7 +35,6 @@ BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
 BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
 
 struct ihdr_infos_s {
-
   //libpng provided
   ulong width;
   ulong height;
@@ -46,24 +44,22 @@ struct ihdr_infos_s {
   ulong filter_method;
   ulong interlace_type;
 
-  //My own
+  //Calculated
   ulong bytes_per_pixel;
   ulong scanline_len;
-
 };
 
 //Takes uncompressed concated IDAT buffer
-
 void glitch_random_filter(BYTE *data, ulonglong data_len, uint scanline_len) {
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    //printf("Glitching offset %llu -> %d\n", i, data[i]);
+    DEBUG_PRINT(("Glitching offset %llu -> %d\n", i, data[i]));
     data[i] = rand()%5;
   }
 }
 
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    //printf("Glitching offset %llu -> %d\n", i, data[i]);
+    DEBUG_PRINT(("Glitching offset %llu -> %d\n", i, data[i]));
     data[i] = filter;
   }
 }
@@ -89,7 +85,7 @@ void glitch_random(BYTE *data, ulonglong data_len, uint scanline_len, double fre
 
 BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
-  printf("Zipping glitched buffer length %ld\n", data_len);
+  DEBUG_PRINT(("Zipping glitched buffer length %ld\n", data_len));
 
   //Init a new compressing zlib
   int ret;
@@ -106,43 +102,48 @@ BYTE *zip_idats(BYTE *raw_data, ulong data_len, uint32_t *compressed_length) {
 
   deflate_stream.next_in = raw_data; 
   deflate_stream.avail_in = data_len; 
-      do {  // This compresses
+  do {  // This compresses
 
-        deflate_stream.next_out = (zipped_idats + zipped_offset); 
-        deflate_stream.avail_out = zipped_len - zipped_offset; 
+    deflate_stream.next_out = (zipped_idats + zipped_offset); 
+    deflate_stream.avail_out = zipped_len - zipped_offset; 
 
-        long prevtotal = deflate_stream.total_out;
+    long prevtotal = deflate_stream.total_out;
 
-        //printf("avail_out1: %u\n", deflate_stream.avail_out);
-        ret = deflate(&deflate_stream, Z_FINISH);
-        //printf("avail_out2: %u\n", deflate_stream.avail_out);
-        
-        long last_deflate_len = deflate_stream.total_out - prevtotal;
-        zipped_offset += last_deflate_len;
+    ret = deflate(&deflate_stream, Z_FINISH);
 
-        if (ret == Z_STREAM_END)
-          break;
+    long last_deflate_len = deflate_stream.total_out - prevtotal;
+    zipped_offset += last_deflate_len;
 
-         //needs bigger buffer
-        if (ret == Z_DATA_ERROR ||
-            ret == Z_BUF_ERROR  ||
-            ((ret == Z_OK) && deflate_stream.avail_out == 0)) 
-        {
-           zipped_len = (zipped_len*2) + 1;
-           //printf("Setting bigger buffer (%ld)\n", zipped_len);
-           zipped_idats = realloc(zipped_idats, zipped_len);
-           continue;
-        }
-      } while (1);
+    //needs bigger buffer
+    if (ret == Z_STREAM_END) 
+      break;
+    else if ( ret == Z_DATA_ERROR ||
+              ret == Z_BUF_ERROR  ||
+             (ret == Z_OK && deflate_stream.avail_out == 0)) 
+    {
+      zipped_len = (zipped_len*2) + 1;
+      DEBUG_PRINT(("Setting bigger buffer (%ld)\n", zipped_len));
+      zipped_idats = realloc(zipped_idats, zipped_len);
+      continue;
+    }
+    else if (ret == Z_DATA_ERROR || ret == Z_DATA_ERROR) {
+      DEBUG_PRINT(("Error in zip_idats: ret was %d, \
+            total out was %ld, last deflate len was %ld\n",
+            ret, deflate_stream.total_out, last_deflate_len));
+      print_error_html("Error compressing PNG image!");
+      free(zipped_idats);
+      return NULL;
+    }
+  } while (1);
 
-    zipped_idats = realloc(zipped_idats, deflate_stream.total_out);
-    printf("Compressed %ld size buffer to %ld\n", data_len, deflate_stream.total_out);
+  zipped_idats = realloc(zipped_idats, deflate_stream.total_out);
+  DEBUG_PRINT(("Compressed %ld size buffer to %ld\n", data_len, deflate_stream.total_out));
 
-    *compressed_length = deflate_stream.total_out;
+  *compressed_length = deflate_stream.total_out;
 
-    deflateEnd(&deflate_stream);
+  deflateEnd(&deflate_stream);
 
-    return(zipped_idats);
+  return(zipped_idats);
 }
 
 
@@ -153,17 +154,18 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   ENTIRE_PNG_BUF = png_buf;
 
   if (png_sig_cmp(ENTIRE_PNG_BUF, 0, 8) != 0) {
-    error(-1, "png_buf", "not PNG data");
+    //error(-1, "png_buf", "not PNG data");
+    print_error_html("Upload is not a valid PNG file!");
     return;
   }
 
   long INDX = 0;
 
-  printf("Buf is %lld bytes\n", PNG_LENGTH);
+  DEBUG_PRINT(("Buf is %lld bytes\n", PNG_LENGTH));
 
   my_png_meta *pm = calloc(1, sizeof(my_png_meta));
   my_init_libpng(pm);
-  
+
   //Normally a file, but instead make it our buffer
   void *read_io_ptr = png_get_io_ptr(pm->read_ptr);
   png_set_read_fn(pm->read_ptr, read_io_ptr, my_png_read_fn);
@@ -175,7 +177,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     PNG_TRANSFORM_EXPAND;
 
   png_read_png(pm->read_ptr, pm->info_ptr, transforms, NULL);
-  
+
   //Now that its being read and transformed, its size will differ
   PNG_LENGTH = 0; 
 
@@ -189,15 +191,18 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   ihdr_infos.height           = png_get_image_height(pm->read_ptr, pm->info_ptr);
   ihdr_infos.width            = png_get_image_width(pm->read_ptr, pm->info_ptr);
 
-  if (ihdr_infos.color_type != 2)
-    error_fatal(1, "ihdr_infos", "Image was not correctly converted to RGB");
+  if (ihdr_infos.color_type != 2) {
+    print_error_html("Image was not correctly converted to RGB");
+    DEBUG_PRINT(("Looks like libpng could not correctly convert file to RGB"));
+    return;
+  }
 
   //Just in case we want to enable alpha, etc
   switch(ihdr_infos.color_type) {
     case 0:  //greyscale
     case 3:  //indexed
       ihdr_infos.bytes_per_pixel = 1;
-    break;
+      break;
     case 4: ihdr_infos.bytes_per_pixel = 2; break; //greyscale w/ alpha 
     case 2: ihdr_infos.bytes_per_pixel = 3; break; //Truecolour (RGB)
     case 6: ihdr_infos.bytes_per_pixel = 4; break; //Truecolour w/ alpha
@@ -206,9 +211,9 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
   ihdr_infos.scanline_len = (ihdr_infos.bytes_per_pixel * ihdr_infos.width) + 1;
 
-  printf("HEIGHT: %lu\n", ihdr_infos.height);
-  printf("WIDTH: %lu\n", ihdr_infos.width);
-  printf("BIT_DEPTH: %lu\n", ihdr_infos.bit_depth);
+  DEBUG_PRINT(("HEIGHT: %lu\n", ihdr_infos.height));
+  DEBUG_PRINT(("WIDTH: %lu\n", ihdr_infos.width));
+  DEBUG_PRINT(("BIT_DEPTH: %lu\n", ihdr_infos.bit_depth));
 
   // Don't compress, since we are merely copying it to memory,
   // we  will be decompressing it again anyway
@@ -218,11 +223,11 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   png_set_write_fn(pm->write_ptr, write_io_ptr, my_png_write_fn, my_png_dummy_flush);
 
   png_set_filter(pm->write_ptr, 0,
-              PNG_FILTER_NONE  | PNG_FILTER_VALUE_NONE |
-              PNG_FILTER_SUB   | PNG_FILTER_VALUE_SUB  |
-              PNG_FILTER_UP    | PNG_FILTER_VALUE_UP   |
-              PNG_FILTER_AVG   | PNG_FILTER_VALUE_AVG  |
-              PNG_FILTER_PAETH | PNG_FILTER_VALUE_PAETH);
+      PNG_FILTER_NONE  | PNG_FILTER_VALUE_NONE |
+      PNG_FILTER_SUB   | PNG_FILTER_VALUE_SUB  |
+      PNG_FILTER_UP    | PNG_FILTER_VALUE_UP   |
+      PNG_FILTER_AVG   | PNG_FILTER_VALUE_AVG  |
+      PNG_FILTER_PAETH | PNG_FILTER_VALUE_PAETH);
 
   //Using callback my_png_write_fn, output is written to ENTIRE_PNG_BUF
   //PNG_LENGTH will be updated too
@@ -232,21 +237,18 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   png_destroy_write_struct(&pm->write_ptr, &pm->info_ptr);
   free(pm);
 
-  printf("Transformed buf is %lld bytes\n", PNG_LENGTH);
+  DEBUG_PRINT(("Transformed buf is %lld bytes\n", PNG_LENGTH));
 
   //Now that libpng is done converting the image, 
   //and we have it in the buffer, lets process it by hand with zlib
-  
-  //Should we preserve bKGD, pHYS, tIME?
-  printf("#### Stage 1: Transform PNG complete ####\n");
 
   struct z_stream_s inflate_stream;
   my_init_zlib(&inflate_stream);
   inflateInit(&inflate_stream);
-  
+
   INDX += 8; //Skip PNG Signature
   INDX += 4; //Skip IHDR len
-  
+
   //Get Header
   get_x_bytes(INDX, 4+13+4, IHDR_BYTES_BUF, ENTIRE_PNG_BUF);
 
@@ -263,7 +265,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
   //We could get this to read directly from stdin stream
   while (INDX < PNG_LENGTH) {
-    
+
     //Get the chunk length
     get_x_bytes(INDX, 4, tmpbytes, ENTIRE_PNG_BUF);
     INDX += 4; 
@@ -298,7 +300,6 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
         long prevtotal = inflate_stream.total_out;
         int ret = inflate(&inflate_stream, Z_NO_FLUSH);
-        //printf("%d\n",ret);
 
         long last_inflate_len = inflate_stream.total_out - prevtotal;
         out_buf_offset += last_inflate_len;
@@ -307,32 +308,35 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
             ret == Z_BUF_ERROR ||
             inflate_stream.avail_out <= 0) //needs bigger buffer
         { 
-           out_buf_len = (out_buf_len*2) + 1;
-           UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, out_buf_len);
-           continue;
+          out_buf_len = (out_buf_len*2) + 1;
+          UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, out_buf_len);
+          continue;
         }
-
+        else if (ret == Z_DATA_ERROR || ret == Z_DATA_ERROR) {
+          DEBUG_PRINT(("Error uncompressing idats: ret was %d, \
+                total out was %ld, last deflate len was %ld\n",
+                ret, inflate_stream.total_out, last_inflate_len));
+          print_error_html("Error uncompressing image data! \
+                            Perhaps this PNG file is corrupt?");
+        }
       } while (inflate_stream.avail_in != 0);
 
       free(in_chunk_bytes);
       INDX += chunk_len + 4; //+ CRC
 
     } else {
-      printf("Chunk %d Not IDAT: ", chunk_count);
+      DEBUG_PRINT(("Chunk %d Not IDAT:\n", chunk_count));
       print_chr_bytes(tmpbytes, 4); 
-      putchar('\n');
       INDX += chunk_len + 8;
     }
   }
-  
+
   long long UNZIPPED_IDATS_LEN = inflate_stream.total_out; 
   UNZIPPED_IDATS_BUF = realloc(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN);
   free(ENTIRE_PNG_BUF);
   inflateEnd(&inflate_stream);
 
-  printf("#### Stage 2: UNZIP transformed PNG complete ####\n");
-
-  printf("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN);
+  DEBUG_PRINT(("Unzipped %lld bytes of data to %lld bytes\n", ZIPPED_IDATS_LEN, UNZIPPED_IDATS_LEN));
 
   char output_dir[] = "pnglitch_c_output";
 
@@ -343,10 +347,12 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   else if (access("pnglitch_c_output", W_OK | X_OK))
     error_fatal(1, "Problem accessing directory", strerror(errno));
 
+  const int path_max_len = 100;
+  char *out_file_paths = malloc(path_max_len*7);
 
-  for (int ftype=0;ftype<7;ftype++) {
+  for (int g=0;g<7;g++) {
 
-    switch(ftype) {
+    switch(g) {
       case 5:
         glitch_random(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, .0005);
         break;
@@ -354,11 +360,16 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
         glitch_random_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len);
         break;
       default:
-        glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, ftype);
+        glitch_filter(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, ihdr_infos.scanline_len, g);
     }
 
     uint32_t REZIPPED_IDATS_LEN = 0;
     BYTE *REZIPPED_IDATS = zip_idats(UNZIPPED_IDATS_BUF, UNZIPPED_IDATS_LEN, &REZIPPED_IDATS_LEN);
+
+    if (REZIPPED_IDATS == NULL) {
+      free (UNZIPPED_IDATS_BUF);
+      continue;
+    }
 
     //Now write thing to file:
     // -Sig
@@ -373,10 +384,13 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
     uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, REZIPPED_IDATS_LEN));
 
-    char outfilename[256];
-    snprintf(outfilename, 256, "%s/%s-%d.png", output_dir, infname_sans_ext, ftype);
+    char* path = out_file_paths + (g * path_max_len);
 
-    FILE *outfp = fopen(outfilename, "wb");
+    snprintf(path, path_max_len, "%s/%s-%d.png", output_dir, infname_sans_ext, g);
+
+    DEBUG_PRINT(("Output file name is %s", path));
+
+    FILE *outfp = fopen(path, "wb");
 
     fwrite(PNG_SIGNATURE, 1, 8, outfp);
     fwrite(&ihdr_size, sizeof(ihdr_size), 1, outfp);
@@ -390,15 +404,26 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     fclose(outfp);
     free(REZIPPED_IDATS);
   }
+
+  //offset
+
+  char *ofp = out_file_paths;
+  int o = path_max_len; //offset
+  print_success_html(ofp + (o*0), ofp + (o*1), ofp + (o*2),
+      ofp + (o*3), ofp + (o*4),ofp + (o*5), ofp + (o*6));
+
+  free(out_file_paths);
   free(UNZIPPED_IDATS_BUF);
 }
 
-
 int main(int argc, char* argv[]) {
+
+  success_template = load_html_template(SUCCESS_FILE_PATH);
+  error_template = load_html_template(ERROR_FILE_PATH);
 
   while (FCGI_Accept() >= 0) {
 
-    printf("content-type: text/plain\r\n\r\n");
+    printf("content-type: text/html\r\n\r\n");
 
     long content_length = get_content_length();
 
@@ -431,15 +456,15 @@ int main(int argc, char* argv[]) {
 
     //printf("Filename of uploaded file: %s\n", form_filename);
 
-    if (filename_sz <= 0 )
+    if (filename_sz <= 0)
       continue;
-    
+
     BYTE *png_buf = calloc(content_length, 1);
 
     long png_length = get_uploaded_file_buf(png_buf, content_length,
         form_boundary, form_boundary_len);
 
-    printf("Size of uploaded png: %ld\n", png_length);
+    DEBUG_PRINT(("Size of uploaded png: %ld\n", png_length));
 
     if (png_length <= 0)
       continue;
@@ -450,6 +475,9 @@ int main(int argc, char* argv[]) {
 
     free(form_meta_buf);
   }
+
+  free(success_template);
+  free(error_template);
 
   return 0;
 }

@@ -2,6 +2,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+void error_html(char* msg) {
+
+}
+
 void error_fatal(int code, char* obj, char* msg) {
   fprintf(stderr,"%s: %s\n", obj, msg);
   exit(code);
@@ -28,11 +32,15 @@ void dump_buf_to_file(char* filename, BYTE *buf, long length) {
 }
 
 void print_int_bytes(BYTE *buf, int x) {
+#ifdef DEBUG
   for (int i=0;i<x;i++)
     printf("%d ", buf[i]);
+#endif
 }
 
 void print_chr_bytes(BYTE *buf, int x) {
+#ifdef DEBUG
   for (int i=0;i<x;i++)
     putchar(buf[i]);
+#endif
 }
