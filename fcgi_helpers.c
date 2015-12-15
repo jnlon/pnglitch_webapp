@@ -24,7 +24,6 @@ int get_form_boundary(char* boundary) {
       print_error_html("Error processing form upload");
       return -1;
     }
-
     bi++;
   }
   return bi;
@@ -68,7 +67,7 @@ int get_form_meta_buf(char* buf) {
 
     int byte = getc(stdin);
 
-    //putchar(byte);
+    putchar(byte);
 
     buf[i] = byte;
 
@@ -78,7 +77,7 @@ int get_form_meta_buf(char* buf) {
       ri = 0;
 
     //Form meta stuff, should not be this long
-    if (i > MAX_FORM_META_LENGTH) {
+    if (i >= MAX_FORM_META_LENGTH) {
       DEBUG_PRINT(("Past max meta length!\n"));
       print_error_html("Error processing form upload");
       free(buf);

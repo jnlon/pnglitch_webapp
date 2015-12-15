@@ -13,5 +13,6 @@ void my_png_dummy_flush(png_structp png_ptr);
 void my_png_write_fn(png_structp png_ptr, png_bytep data, png_size_t length);
 void my_png_read_fn(png_structp png_ptr, png_bytep data, png_size_t length);
 void my_init_libpng(my_png_meta *png_meta);
+void my_deinit_libpng(my_png_meta *png_meta);
 void my_init_zlib(z_stream *s);
 #endif 

@@ -2,10 +2,12 @@
 #include <png.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <setjmp.h>
 
 #include "common.h"
 #include "library_helpers.h"
 #include "debug.h"
+#include "web.h"
 
 void my_init_zlib(z_stream *s) {
   s->zalloc = Z_NULL;
@@ -58,41 +60,50 @@ void my_png_read_fn(png_structp png_ptr, png_bytep data, png_size_t length) {
    MY_PNG_READ_OFFSET += length;
 }
 
+void my_libpng_write_error() {
+  DEBUG_PRINT(("Libpng encountered an error while writing!\n"));
+  //print_error_html("Error processing image!");
+}
+void my_libpng_read_error() {
+  DEBUG_PRINT(("Libpng encountered an error while reading!\n"));
+  //print_error_html("Error processing image!");
+}
+
+void my_deinit_libpng(my_png_meta *pm) {
+  png_destroy_read_struct(&pm->read_ptr, &pm->info_ptr, &pm->end_info);
+  png_destroy_write_struct(&pm->write_ptr, &pm->info_ptr);
+  free(pm);
+}
+
 
 void my_init_libpng(my_png_meta *png_meta) {
 
   png_structp png_read_ptr = 
-    png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, my_libpng_read_error, NULL);
 
   if (!png_read_ptr)
-    error(-1, "libpng", "cannot init libpng read struct");
+    error_fatal(-1, "libpng", "cannot init libpng read struct");
 
   png_infop info_ptr = png_create_info_struct(png_read_ptr);
 
   if (!info_ptr) {
     png_destroy_read_struct(&png_read_ptr, (png_infopp)NULL, (png_infopp)NULL);
-    error(-1, "libpng", "cannot init libpng info struct");
+    error_fatal(-1, "libpng", "cannot init libpng info struct");
   }
 
   png_infop end_info = png_create_info_struct(png_read_ptr);
 
   if (!end_info) {
     png_destroy_read_struct(&png_read_ptr, &info_ptr, (png_infopp)NULL);
-    error(-1, "libpng", "cannot init libpng end info struct");
+    error_fatal(-1, "libpng", "cannot init libpng end info struct");
   }
-
+  
   //write pointer
-  png_structp png_write_ptr = png_create_write_struct
-    (PNG_LIBPNG_VER_STRING, (png_voidp)NULL,
-     NULL, NULL);
+  png_structp png_write_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, my_libpng_write_error, NULL);
 
   if (!png_write_ptr)
     error(-1, "libpng", "Could not initialize write pointer");
 
-  if (setjmp(png_jmpbuf(png_read_ptr))) {
-    png_destroy_read_struct(&png_read_ptr, &info_ptr, &end_info);
-    error(-1, "libpng", "setjmp error");
-  }
   
   png_meta->write_ptr = png_write_ptr;
   png_meta->read_ptr = png_read_ptr;
