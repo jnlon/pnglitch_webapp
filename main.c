@@ -51,15 +51,17 @@ struct ihdr_infos_s {
 
 //Takes uncompressed concated IDAT buffer
 void glitch_random_filter(BYTE *data, ulonglong data_len, uint scanline_len) {
+  DEBUG_PRINT(("Glitching offsets with random\n"));
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    DEBUG_PRINT(("Glitching offset %llu -> %d\n", i, data[i]));
+    DEBUG_PRINT(("%llu (%d)", i, data[i]));
     data[i] = rand()%5;
   }
 }
 
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
+  DEBUG_PRINT(("Glitching offsets with %d\n", filter));
   for (ulonglong i=0; i<data_len; i += scanline_len) {
-    DEBUG_PRINT(("Glitching offset %llu -> %d\n", i, data[i]));
+    DEBUG_PRINT(("%llu (%d) ", i, data[i]));
     data[i] = filter;
   }
 }
@@ -166,7 +168,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
   //If libpng errors, we end up here
   if (setjmp(png_jmpbuf(pm->read_ptr))) {
-    DEBUG_PRINT(("libpng called setjmp!"));
+    DEBUG_PRINT(("libpng called setjmp!\n"));
     png_destroy_read_struct(&pm->read_ptr, &pm->info_ptr, &pm->end_info);
     print_error_html("Error processing image! It's probably corrupt!");
     free(pm);
@@ -199,8 +201,8 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   ihdr_infos.width            = png_get_image_width(pm->read_ptr, pm->info_ptr);
 
   if (ihdr_infos.color_type != 2) {
-    print_error_html("Image was not correctly converted to RGB");
-    DEBUG_PRINT(("Looks like libpng could not correctly convert file to RGB"));
+    print_error_html("Error processing image!");
+    DEBUG_PRINT(("Looks like libpng could not correctly convert to RGB\n"));
     return;
   }
 
@@ -257,7 +259,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   pngi += 4; //Skip IHDR len
 
   //Get Header
-  get_x_bytes(pngi, 4+13+4, IHDR_BYTES_BUF, ENTIRE_PNG_BUF);
+  buf_slice(pngi, 4+13+4, IHDR_BYTES_BUF, ENTIRE_PNG_BUF);
 
   pngi += 4+13+4; //Skip All of IHDR
 
@@ -281,18 +283,18 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   while (pngi < PNG_LENGTH) {
 
     //Get the chunk length
-    get_x_bytes(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
+    buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
     pngi += 4; 
     long chunk_len = _4bytesToInt(tmpbytes);
 
     //Now, what is the header name?
-    get_x_bytes(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
+    buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
 
     chunk_count += 1;
 
     if (memcmp(tmpbytes, IDAT_HDR_BYTES, 4) == 0) {
 
-      DEBUG_PRINT("Chunk %d is idat\n");
+      DEBUG_PRINT(("Chunk %d is IDAT\n", chunk_count));
 
       pngi += 4; //Skip over header
 
@@ -300,15 +302,15 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
       BYTE *in_chunk_bytes = calloc(chunk_len, 1);
       bzero(in_chunk_bytes, chunk_len);
-      get_x_bytes(pngi, chunk_len, in_chunk_bytes, ENTIRE_PNG_BUF);
+      buf_slice(pngi, chunk_len, in_chunk_bytes, ENTIRE_PNG_BUF);
 
       unzipped_idats_buf = realloc(unzipped_idats_buf, unzip_buf_len);
 
       inflate_stream.next_in = in_chunk_bytes; //tell inflater its input buffer
       inflate_stream.avail_in = chunk_len; //tell inflater its input size
 
-      //uncompress this idat
-      do { 
+      
+      do {  //uncompress this idat
 
         //tell inflater where to write, how much room
         inflate_stream.next_out = unzipped_idats_buf + unzip_buf_offset; 
@@ -350,13 +352,13 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
     } else {
       DEBUG_PRINT(("Chunk %d not IDAT:\n", chunk_count));
-
       pngi += chunk_len + 8;
     }
   }
 
   long long unzipped_idats_len = inflate_stream.total_out; 
   unzipped_idats_buf = realloc(unzipped_idats_buf, unzipped_idats_len);
+
   free(ENTIRE_PNG_BUF);
   inflateEnd(&inflate_stream);
 
@@ -378,7 +380,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
     switch(g) {
       case 5:
-        glitch_random(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, .0005);
+        glitch_random(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, 0.0005);
         break;
       case 6:
         glitch_random_filter(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len);
@@ -392,7 +394,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
     if (REZIPPED_IDATS == NULL) {
       free (unzipped_idats_buf);
-      continue;
+      return;
     }
 
     //Now write thing to file:
@@ -412,7 +414,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
     snprintf(path, path_max_len, "%s/%s-%d.png", output_dir, infname_sans_ext, g);
 
-    DEBUG_PRINT(("Output file name is %s", path));
+    DEBUG_PRINT(("Output file name is %s\n", path));
 
     FILE *outfp = fopen(path, "wb");
 
@@ -449,37 +451,51 @@ int main(int argc, char* argv[]) {
 
     long content_length = get_content_length();
 
-    if (content_length <= 0)
+    if (content_length <= 0) {
+      switch (content_length) {
+        case -1: print_error_html((UPLOAD_ERROR)); break;
+        case -2: print_error_html(("The uploaded file is too big! \
+                       Maximum file size is %ldMb", (MAX_CONTENT_LENGTH/1024/1024))); break;
+        case -3: print_error_html(("The file was too small! Please upload a valid PNG file!")); break;
+        default: print_error_html((UPLOAD_ERROR)); 
+      }
       continue;
+    }
 
     char form_boundary[MAX_FORM_BOUNDARY_LENGTH];
     memset(form_boundary, MAX_FORM_BOUNDARY_LENGTH, 1);
 
     int form_boundary_len = get_form_boundary(form_boundary);
 
-    if (form_boundary_len <= 0)
+    if (form_boundary_len <= 0) {
+      print_error_html("Error processing form upload");
       continue;
+    }
 
     form_boundary[form_boundary_len] = '\0';
 
     char* form_meta_buf = calloc(MAX_FORM_META_LENGTH, 1);
+    bzero(form_meta_buf, MAX_FORM_META_LENGTH);
     int form_meta_buf_sz  = get_form_meta_buf(form_meta_buf);
 
-    if (form_meta_buf_sz <= 0)
+    if (form_meta_buf_sz <= 0) {
+      print_error_html("Error processing form upload!");
       continue;
+    }
 
-    form_meta_buf = realloc(form_meta_buf, form_meta_buf_sz);
+    form_meta_buf = realloc(form_meta_buf, form_meta_buf_sz+1);
+    form_meta_buf[form_meta_buf_sz] = '\0';
 
-    char form_filename[MAX_FILENAME_LENGTH];
-    memset(form_filename, MAX_FILENAME_LENGTH, 1);
+    char form_filename_buf[MAX_FILENAME_LENGTH];
+    bzero(form_filename_buf, MAX_FILENAME_LENGTH);
 
-    int filename_sz = get_form_filename(form_meta_buf, form_filename);
-    form_filename[filename_sz] = '\0';
+    char *form_filename = get_form_filename(form_meta_buf, form_filename_buf);
 
-    //printf("Filename of uploaded file: %s\n", form_filename);
-
-    if (filename_sz <= 0)
+    if (form_filename == NULL) {
+      free(form_meta_buf);
+      print_error_html("Error processing form upload");
       continue;
+    }
 
     BYTE *png_buf = calloc(content_length, 1);
 
@@ -488,8 +504,10 @@ int main(int argc, char* argv[]) {
 
     DEBUG_PRINT(("Size of uploaded png: %ld\n", png_length));
 
-    if (png_length <= 0)
+    if (png_length <= 0) {
+      print_error_html("Error processing form upload");
       continue;
+    }
 
     png_buf = realloc(png_buf, png_length);
 

@@ -17,7 +17,7 @@ void error(int code, char* obj, char* msg) {
 
 void dump_buf_to_file(char* filename, BYTE *buf, long length) {
 
-  FILE *f = fopen(filename, "w");
+  FILE *f = fopen(filename, "wb");
   long left = length;
   long offset = 0;
 

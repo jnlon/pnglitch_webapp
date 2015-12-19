@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-void get_x_bytes(long start, long len, BYTE* result, BYTE* data)  {
+void buf_slice(long start, long len, BYTE* result, BYTE* data)  {
   memcpy(result, &data[start], len);
 }
 

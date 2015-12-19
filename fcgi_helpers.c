@@ -3,6 +3,7 @@
 #include <fastcgi.h>
 #include <string.h>
 #include <stdlib.h>
+#include <libgen.h>
 
 #include "fcgi_helpers.h"
 #include "web.h"
@@ -21,7 +22,6 @@ int get_form_boundary(char* boundary) {
 
     if (bi >= MAX_FORM_BOUNDARY_LENGTH) {
       DEBUG_PRINT(("Form boundary is too large"));
-      print_error_html("Error processing form upload");
       return -1;
     }
     bi++;
@@ -31,39 +31,36 @@ int get_form_boundary(char* boundary) {
 
 long get_content_length() {
 
-  char *CONTENT_LENGTH_C = getenv("CONTENT_LENGTH");
+  char *content_length_c = getenv("CONTENT_LENGTH");
 
-  if (CONTENT_LENGTH_C == NULL) {
+  if (content_length_c == NULL) {
     DEBUG_PRINT(("No content_length!!\n"));
     print_error_html("Error processing form upload");
     return -1;
   }
 
-  long CONTENT_LENGTH = atol(CONTENT_LENGTH_C);
+  long content_length = atol(content_length_c);
 
-  if (CONTENT_LENGTH > MAX_CONTENT_LENGTH) {
-    DEBUG_PRINT(("File too big!\n"));
-    print_error_html("The uploaded file is too big (10MB max)");
-    return -1;
+  if (content_length > MAX_CONTENT_LENGTH) {
+    DEBUG_PRINT(("content_length too big! -> %ld\n", content_length));
+    return -2;
   }
 
-  if (CONTENT_LENGTH <= 0) {
-    DEBUG_PRINT(("File too short!\n"));
-    print_error_html("The uploaded file is too short");
-    return -1;
+  if (content_length <= 8) {
+    DEBUG_PRINT(("content_length too short! -> %ld\n", content_length));
+    return -3;
   }
 
-  return(CONTENT_LENGTH);
-
+  return(content_length);
 }
 
 
 int get_form_meta_buf(char* buf) {
 
-  int ri = 0, i = 0;
+  int sig_i = 0, i = 0;
   int begin_request_sig[] = {13, 10, 13, 10};
 
-  while(ri <= 3) { 
+  while(sig_i <= 3) { 
 
     int byte = getc(stdin);
 
@@ -71,15 +68,14 @@ int get_form_meta_buf(char* buf) {
 
     buf[i] = byte;
 
-    if (byte == begin_request_sig[ri])
-      ri++;
+    if (byte == begin_request_sig[sig_i])
+      sig_i++;
     else
-      ri = 0;
+      sig_i = 0;
 
     //Form meta stuff, should not be this long
     if (i >= MAX_FORM_META_LENGTH) {
       DEBUG_PRINT(("Past max meta length!\n"));
-      print_error_html("Error processing form upload");
       free(buf);
       return -1;
     }
@@ -107,7 +103,6 @@ long get_uploaded_file_buf(unsigned char *upload, long content_length,
 
   if (end_ptr == NULL) {
     DEBUG_PRINT(("Cannot find end-of-form boundary\n"));
-    print_error_html("Error processing form upload");
     free(upload);
     return -1;
   }
@@ -125,22 +120,22 @@ long get_uploaded_file_buf(unsigned char *upload, long content_length,
   return png_length;
 }
 
-int get_form_filename(char* buf, char* filename) {
+char *get_form_filename(char* buf, char* filename) {
 
-  char* fname_begin = strstr(buf, "filename=") + 10;
+  char *fname_begin = strstr(buf, "filename=");
 
   if (fname_begin == NULL) {
     DEBUG_PRINT(("Cannot find filename= in form meta"));
-    print_error_html("Error processing form upload");
-    return -1;
+    return NULL;
   }
 
-  char* fname_end = strstr(fname_begin, "\"");
+  fname_begin += 10;
+
+  char *fname_end = strchr(fname_begin, '"');
 
   if (fname_end == NULL) {
     DEBUG_PRINT(("Cannot find filename end \" (quote) in form meta"));
-    print_error_html("Error processing form upload");
-    return -1;
+    return NULL;
   }
 
   int i=0;
@@ -151,5 +146,12 @@ int get_form_filename(char* buf, char* filename) {
     i++;
   }
 
-  return i;
+  filename[i] = '\0';
+
+  //Note: also set directory permissions
+  DEBUG_PRINT(("Filename From form: %s (len %d)\n", filename, i));
+  filename = basename(filename);
+  DEBUG_PRINT(("Sanitized: %s\n", filename));
+
+  return filename;
 }

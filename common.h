@@ -16,7 +16,7 @@ extern BYTE *ENTIRE_PNG_BUF;
 extern long long PNG_LENGTH; //Also used for writing
 
 void append_bytes(BYTE *basebuf, BYTE *inbuf, int base_offset, int inbuf_length);
-void get_x_bytes(long start, long len, BYTE* result, BYTE* data);
+void buf_slice(long start, long len, BYTE* result, BYTE* data);
 void intTo4Bytes(uint i, BYTE *buf);
 uint _4bytesToInt(BYTE *bb);
 
