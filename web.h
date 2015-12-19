@@ -5,6 +5,7 @@
 #define ERROR_FILE_PATH "error.template.html"
 
 #define UPLOAD_ERROR "An error was encountered while processing the file upload!"
+#define UPLOAD_ERROR_TOO_BIG "An error was encountered while processing the file upload!"
 #define PROCESS_ERROR "An error was ecountered while glitching your PNG file!"
 
 /*Templates will be malloced in load_html_templates

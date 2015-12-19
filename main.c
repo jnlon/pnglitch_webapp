@@ -454,10 +454,9 @@ int main(int argc, char* argv[]) {
     if (content_length <= 0) {
       switch (content_length) {
         case -1: print_error_html((UPLOAD_ERROR)); break;
-        case -2: print_error_html(("The uploaded file is too big! \
-                       Maximum file size is %ldMb", (MAX_CONTENT_LENGTH/1024/1024))); break;
-        case -3: print_error_html(("The file was too small! Please upload a valid PNG file!")); break;
-        default: print_error_html((UPLOAD_ERROR)); 
+        case -2: print_error_html("The uploaded file is too big! Maximum file size is 10MB"); break;
+        case -3: print_error_html("The file was too small! Please upload a valid PNG file!"); break;
+        default: print_error_html(UPLOAD_ERROR); 
       }
       continue;
     }
