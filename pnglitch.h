@@ -20,9 +20,17 @@ void write_glitched_image(unsigned char *glitched_idats,
     long glitched_idats_len, 
     unsigned char *ihdr_bytes_buf, unsigned char *ancil_buf,
     long long ancil_buf_len, FILE *fp);
+
 void glitch_random(unsigned char *data, unsigned long data_len, unsigned int scanline_len, float freq);
+
 void glitch_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len, int filter);
+
 void glitch_random_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len);
+
 unsigned char *zip_idats(unsigned char *raw_data, ulong data_len, long long *compressed_length);
+
+
+unsigned char *uncompress_buffer(struct z_stream_s *inflate_stream, 
+    unsigned char *unzip_idats_buf, long *unzip_buf_len, long *unzip_buf_offset);
 
 #endif

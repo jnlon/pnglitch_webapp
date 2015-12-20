@@ -43,7 +43,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
     return;
   }
 
-  DEBUG_PRINT(("Buf is %lld bytes\n", PNG_LENGTH));
+  DEBUG_PRINT(("Initial png size is %lld bytes\n", PNG_LENGTH));
 
   my_png_meta *pm = calloc(1, sizeof(my_png_meta));
   my_init_libpng(pm);
@@ -61,7 +61,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   void *read_io_ptr = png_get_io_ptr(pm->read_ptr);
   png_set_read_fn(pm->read_ptr, read_io_ptr, my_png_read_fn);
 
-  //Should convert all PNG image types to RGB
+  //Transform all PNG image types to RGB
   int transforms = 
     PNG_TRANSFORM_GRAY_TO_RGB |
     PNG_TRANSFORM_STRIP_ALPHA | 
@@ -107,7 +107,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   DEBUG_PRINT(("BIT_DEPTH: %lu\n", ihdr_infos.bit_depth));
 
   // Don't compress, since we are merely copying it to memory,
-  // we  will be decompressing it again anyway
+  // we will be decompressing it again anyway
   png_set_compression_level(pm->write_ptr, Z_NO_COMPRESSION);
 
   void *write_io_ptr = png_get_io_ptr(pm->write_ptr);
@@ -131,16 +131,16 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   
   png_set_text(pm->write_ptr, pm->info_ptr, &comment_struct, 1);
 
-  //Using callback my_png_write_fn, output is written to ENTIRE_PNG_BUF
-  //PNG_LENGTH will be updated too
+  //Buffer is Written using callback my_png_write_fn to buffer
+  //ENTIRE_PNG_BUF. PNG_LENGTH will be updated automatically by it
   png_write_png(pm->write_ptr, pm->info_ptr, PNG_TRANSFORM_IDENTITY, NULL);
 
   my_deinit_libpng(pm);
 
   DEBUG_PRINT(("libpng output buf is %lld bytes\n", PNG_LENGTH));
 
-  //Now that libpng is done converting the image, 
-  //and we have it in the buffer, we process it by hand with zlib
+  //Now that libpng has converted the image
+  //and we have it in a buffer, we process it by hand with zlib
   struct z_stream_s inflate_stream;
   my_init_zlib(&inflate_stream);
   inflateInit(&inflate_stream);
@@ -156,15 +156,15 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   buf_read(ihdr_bytes_buf, &pngp, 4+4+13+4);
 
   //When we run into non-idat chunks, we will want to preserve them.
-  //The spec says there'e no chunk that NEEDS to go after IDAT,
-  //so we will simply concatenate all of these chunks into a buffer
+  //The spec says there's no chunk that needs to go after IDAT,
+  //so we can simply concatenate all of these chunks into a buffer
   //then write them all at once after the IHDR
   
   //ancillary chunks, eg comments
   unsigned char *ancil_chunks_buf = calloc(1,1);
   long long ancil_chunks_len = 0;
 
-  unsigned char *unzipped_idats_buf = calloc(1, 1);
+  unsigned char *unzip_idats_buf = calloc(1, 1);
   long unzip_buf_len = 1;
   long unzip_buf_offset = 0;
 
@@ -204,90 +204,67 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
 
       zipped_idats_len += chunk_len;
 
-      unsigned char *in_chunk_bytes = calloc(chunk_len, 1);
-      bzero(in_chunk_bytes, chunk_len);
-      buf_read(in_chunk_bytes, &pngp, chunk_len);
+      //read the chunk's data section
+      unsigned char *raw_chunk_buf = calloc(chunk_len, 1);
+      buf_read(raw_chunk_buf, &pngp, chunk_len);
 
-      unzipped_idats_buf = realloc(unzipped_idats_buf, unzip_buf_len);
+      //Tell inflate to uncompress it
+      inflate_stream.next_in = raw_chunk_buf; 
+      inflate_stream.avail_in = chunk_len; 
 
-      inflate_stream.next_in = in_chunk_bytes; //tell inflater its input buffer
-      inflate_stream.avail_in = chunk_len; //tell inflater its input size
+      //Now uncompress it (resizes buffer automatically)
+      unsigned char *check_uncompress = uncompress_buffer(&inflate_stream, 
+          unzip_idats_buf, &unzip_buf_len, &unzip_buf_offset);
 
-      
-      do {  //uncompress this idat
+      //Stop if error
+      if (check_uncompress == NULL) {
+        print_error_html(PROCESS_ERROR);
+        free(raw_chunk_buf);
+        free(unzip_idats_buf);
+        free(ENTIRE_PNG_BUF);
+        return;
+      }
 
-        //tell inflater where to write, how much room
-        inflate_stream.next_out = unzipped_idats_buf + unzip_buf_offset; 
-        inflate_stream.avail_out = unzip_buf_len - unzip_buf_offset; 
-
-        long prevtotal = inflate_stream.total_out;
-        int ret = inflate(&inflate_stream, Z_NO_FLUSH);
-
-        long last_inflate_len = inflate_stream.total_out - prevtotal;
-        unzip_buf_offset += last_inflate_len;
-
-        if (ret == Z_DATA_ERROR ||
-            ret == Z_BUF_ERROR ||
-            inflate_stream.avail_out <= 0) //needs bigger buffer
-        { 
-          unzip_buf_len = (unzip_buf_len*2) + 1;
-          unzipped_idats_buf = realloc(unzipped_idats_buf, unzip_buf_len);
-          continue;
-        }
-        else if (ret == Z_DATA_ERROR || ret == Z_DATA_ERROR) {
-
-          DEBUG_PRINT(( "zlib error when decompresing!\n \
-                        Did libpng return a bad image?\n \
-                        last return was '%d'\n \
-                        total output was '%ld'\n \
-                        last inflate len was '%ld' \n",
-                ret, inflate_stream.total_out, last_inflate_len));
-
-          print_error_html(PROCESS_ERROR);
-          free(in_chunk_bytes);
-          free(unzipped_idats_buf);
-          free(ENTIRE_PNG_BUF);
-          return;
-        }
-      } while (inflate_stream.avail_in != 0);
-
-      free(in_chunk_bytes);
-      pngp += 4; // skip this idat's CRC
+      //Moving on
+      unzip_idats_buf = check_uncompress;
+      free(raw_chunk_buf);
+      pngp += 4; // skip CRC
 
     } else {
+
       DEBUG_PRINT(("Chunk %d not IDAT:\n", chunk_count));
+
       dbg_printbuffer(chunk_label, 4);
-      //pngp += chunk_len + 4; //skip chunk and crc
-      DEBUG_PRINT(("anc: %lld\n", ancil_chunks_len));
-      
-      ancil_chunks_buf = realloc(ancil_chunks_buf, ancil_chunks_len + 4 + 4 + chunk_len + 4);
+
+      ancil_chunks_buf = realloc(ancil_chunks_buf, 
+          ancil_chunks_len + 4 + 4 + chunk_len + 4);
+
+      //append length and label bytes
       append_bytes(ancil_chunks_buf, chunk_len_buf, &ancil_chunks_len, 4);
       append_bytes(ancil_chunks_buf, chunk_label, &ancil_chunks_len, 4);
 
+      //append chunk data
       unsigned char *chunk_data = malloc(chunk_len);
       buf_read(chunk_data, &pngp, chunk_len);
-
       append_bytes(ancil_chunks_buf, chunk_data, &ancil_chunks_len, chunk_len );
 
+      //append chunk crc
       unsigned char chunk_crc_buf[4];
       buf_read(chunk_crc_buf, &pngp, 4);
-
       append_bytes(ancil_chunks_buf, chunk_crc_buf, &ancil_chunks_len, 4);
-
-      DEBUG_PRINT(("anc: %lld\n", ancil_chunks_len));
 
       free(chunk_data);
 
-      //pngp += chunk_len ;
-      
+      DEBUG_PRINT(("ancillary chunks length: %lld\n", ancil_chunks_len));
+
     }
   }
 
-  
-  dbg_printbuffer(ancil_chunks_buf, ancil_chunks_len);
 
+  //dbg_printbuffer(ancil_chunks_buf, ancil_chunks_len);
+  //
   unsigned long unzipped_idats_len = inflate_stream.total_out; 
-  unzipped_idats_buf = realloc(unzipped_idats_buf, unzipped_idats_len);
+  unzip_idats_buf = realloc(unzip_idats_buf, unzipped_idats_len);
 
   free(ENTIRE_PNG_BUF);
   inflateEnd(&inflate_stream);
@@ -310,20 +287,20 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
 
     switch(g) {
       case 5:
-        glitch_random(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, 0.0005);
+        glitch_random(unzip_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, 0.0005);
         break;
       case 6:
-        glitch_random_filter(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len);
+        glitch_random_filter(unzip_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len);
         break;
       default:
-        glitch_filter(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, g);
+        glitch_filter(unzip_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, g);
     }
 
     long long glitched_idats_len = 0;
-    unsigned char *glitched_idats= zip_idats(unzipped_idats_buf, unzipped_idats_len, &glitched_idats_len);
+    unsigned char *glitched_idats= zip_idats(unzip_idats_buf, unzipped_idats_len, &glitched_idats_len);
 
     if (glitched_idats == NULL) {
-      free (unzipped_idats_buf);
+      free (unzip_idats_buf);
       return;
     }
 
@@ -357,7 +334,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
       ofp + (o*3), ofp + (o*4),ofp + (o*5), ofp + (o*6));
 
   free(out_file_paths);
-  free(unzipped_idats_buf);
+  free(unzip_idats_buf);
 }
 
 int main(int argc, char* argv[]) {

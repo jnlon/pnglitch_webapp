@@ -15,6 +15,50 @@ unsigned char PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //len 8
 unsigned char PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //len 12
 unsigned char IDAT_HDR_BYTES[] = {73, 68, 65, 84};
 
+
+unsigned char *uncompress_buffer(struct z_stream_s *inflate_stream, 
+    unsigned char *unzip_idats_buf, 
+    long *unzip_buf_len, long *unzip_buf_offset) {
+
+  do {  
+
+    //tell inflater where to write, how much room it has
+    inflate_stream->next_out = unzip_idats_buf + *unzip_buf_offset; 
+    inflate_stream->avail_out = *unzip_buf_len - *unzip_buf_offset; 
+
+    long prevtotal = inflate_stream->total_out;
+
+    int ret = inflate(inflate_stream, Z_NO_FLUSH);
+
+    long last_inflate_len = inflate_stream->total_out - prevtotal;
+
+    *unzip_buf_offset += last_inflate_len;
+
+    if (ret == Z_DATA_ERROR ||
+        ret == Z_BUF_ERROR ||
+        inflate_stream->avail_out <= 0) 
+    { 
+      //Increase size if output buffer
+      *unzip_buf_len = (*unzip_buf_len*2) + 1;
+      unzip_idats_buf = realloc(unzip_idats_buf, *unzip_buf_len);
+      continue;
+    }
+    else if (ret == Z_DATA_ERROR || ret == Z_DATA_ERROR) {
+      DEBUG_PRINT(( "zlib error when decompresing!\n \
+            Did libpng return a bad image?\n \
+            last return was '%d'\n \
+            total output was '%ld'\n \
+            last inflate len was '%ld' \n",
+            ret, inflate_stream->total_out, last_inflate_len));
+      return NULL;
+    }
+  } 
+  while (inflate_stream->avail_in != 0);
+
+  return unzip_idats_buf;
+
+}
+
 unsigned char *zip_idats(unsigned char *raw_data, ulong data_len, long long *compressed_length) {
 
   DEBUG_PRINT(("Zipping glitched buffer length %ld\n", data_len));
