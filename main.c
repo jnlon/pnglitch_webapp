@@ -125,7 +125,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   struct png_text_struct comment_struct;
 
   comment_struct.compression = -1;
-  comment_struct.key = "Glitched by pnglitch.me";
+  comment_struct.key = "-Glitched by pnglitch.me-";
   comment_struct.text = NULL;
   comment_struct.text_length = 0;
   
@@ -262,7 +262,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
 
 
   //dbg_printbuffer(ancil_chunks_buf, ancil_chunks_len);
-  //
+  
   unsigned long unzipped_idats_len = inflate_stream.total_out; 
   unzip_idats_buf = realloc(unzip_idats_buf, unzipped_idats_len);
 
@@ -303,13 +303,6 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
       free (unzip_idats_buf);
       return;
     }
-
-    //Now write thing to file:
-    // -Sig
-    // -IHDR
-    // -[optional: others?]
-    // -Idats
-    // -IEND
 
 
     char* path = out_file_paths + (g * path_max_len);

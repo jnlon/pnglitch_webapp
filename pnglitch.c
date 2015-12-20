@@ -4,10 +4,13 @@
 #include <arpa/inet.h>
 #include <fcgi_stdio.h>
 #include <png.h>
-#include "libs.h"
 
-#include "pnglitch.h"
+#define DEBUG
+
+#include "libs.h"
 #include "debug.h"
+#include "pnglitch.h"
+
 
 typedef unsigned char BYTE;
 
@@ -67,7 +70,7 @@ unsigned char *zip_idats(unsigned char *raw_data, ulong data_len, long long *com
   int ret;
   struct z_stream_s deflate_stream;
   my_init_zlib(&deflate_stream);
-  ret = deflateInit(&deflate_stream, Z_NO_COMPRESSION);//Z_DEFAULT_COMPRESSION);
+  ret = deflateInit(&deflate_stream, Z_DEFAULT_COMPRESSION);
   if (ret != Z_OK) 
     error_fatal(-1, "zlib deflate init", "ret != Z_OK");
 
@@ -126,7 +129,7 @@ unsigned char *zip_idats(unsigned char *raw_data, ulong data_len, long long *com
 void glitch_random_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len) {
   DEBUG_PRINT(("\nGlitching offsets with random\n"));
   for (unsigned long i=0; i<data_len; i += scanline_len) {
-    DEBUG_PRINT(("%lu (%d)", i, data[i]));
+    //DEBUG_PRINT(("%lu (%d)", i, data[i]));
     data[i] = rand()%5;
   }
 }
@@ -134,7 +137,7 @@ void glitch_random_filter(unsigned char *data, unsigned long data_len, unsigned 
 void glitch_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len, int filter) {
   DEBUG_PRINT(("\nGlitching offsets with %d\n", filter));
   for (unsigned long i=0; i<data_len; i += scanline_len) {
-    DEBUG_PRINT(("%lu (%d) ", i, data[i]));
+    //DEBUG_PRINT(("%lu (%d) ", i, data[i]));
     data[i] = filter;
   }
 }
@@ -162,19 +165,45 @@ void write_glitched_image(unsigned char *glitched_idats,
     long glitched_idats_len, unsigned char *ihdr_bytes_buf,
     unsigned char *ancil_buf, long long ancil_len, FILE* fp) {
 
+  //What is written (in this order)
+  // -PNG signature (constant)
+  // -header chunk (IHDR)
+  // -ancillary chunks (!IDATs)
+  // -IDATS
+  //  -spread out into fixed-size chunks
+  //  -need to re-calculate crc for each
+  // -IEND (constant)
 
-  uint32_t idat_len = htonl(glitched_idats_len);
-  uint32_t idat_data_crc = crc32(0L, glitched_idats, glitched_idats_len); 
   uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
-  uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, glitched_idats_len));
 
   fwrite(PNG_SIGNATURE, 1, 8, fp);
   fwrite(ihdr_bytes_buf, 1, 4+4+13+4, fp);
   fwrite(ancil_buf, 1, ancil_len, fp);
-  fwrite(&idat_len, sizeof(idat_len), 1, fp);
-  fwrite(IDAT_HDR_BYTES, 1, 4, fp);
-  fwrite(glitched_idats, 1, glitched_idats_len, fp); //
-  fwrite(&idat_crc, sizeof(idat_crc), 1, fp);
-  fwrite(PNG_IEND_CHUNK, 1, 12, fp);
 
+  long bytes_left = glitched_idats_len;
+  unsigned char *idats_stream = glitched_idats;
+  uint32_t idat_len = 8192;
+
+  while (bytes_left > 0) {
+
+    idat_len = (bytes_left < idat_len) ? bytes_left : idat_len;
+    uint32_t idat_len_buf = htonl(idat_len);
+
+    DEBUG_PRINT(("idat_len: %d\n", idat_len));
+
+    fwrite(&idat_len_buf, sizeof(idat_len_buf), 1, fp); 
+    fwrite(IDAT_HDR_BYTES, 1, 4, fp); //constant
+
+    //calculate crc
+    uint32_t idat_data_crc = crc32(0L, idats_stream, idat_len); 
+    uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, idat_len));
+
+    fwrite(idats_stream, 1, idat_len, fp);
+    fwrite(&idat_crc, sizeof(idat_crc), 1, fp);
+
+    idats_stream += idat_len;
+    bytes_left -= idat_len;
+  }
+
+  fwrite(PNG_IEND_CHUNK, 1, 12, fp);
 }
