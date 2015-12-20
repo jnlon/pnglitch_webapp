@@ -35,12 +35,9 @@ void my_png_write_fn(png_structp png_ptr, png_bytep data, png_size_t length) {
    if (PNG_LENGTH > MAX_PNG_OUT_BYTESIZE)
       png_error(png_ptr, "Write Error: Trying to realloc > 30MB");
 
-   append_bytes(ENTIRE_PNG_BUF, data, PNG_LENGTH, length);
-
-   PNG_LENGTH += length;
+   append_bytes(ENTIRE_PNG_BUF, data, &PNG_LENGTH, length);
 
 }
-
 
 //This callback depends on a global MY_PNG_READ_OFFSET
 //to figure out what part of the buffer it should return.

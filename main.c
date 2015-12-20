@@ -16,16 +16,15 @@
 #include "globals.h"
 #include "bufs.h"
 #include "pnglitch.h"
-
-#ifdef DEBUG
 #include "debug.h"
-#endif
 
+//To properly free memory from fcgi library
+void OS_LibShutdown(void);
 
 //Globals, needed for callbacks
-long long MY_PNG_READ_OFFSET = 0;
+long long MY_PNG_READ_OFFSET;
 unsigned char *ENTIRE_PNG_BUF;
-long long PNG_LENGTH = 0; 
+long long PNG_LENGTH; 
 
 /* Use Libpng to tansform the input into into RGB format 
  * (basically re-encode image using all filter methods)
@@ -33,9 +32,7 @@ long long PNG_LENGTH = 0;
  * Then, glitch this buffer manually
  */
 
-
-
-void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
+void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length) {
 
   MY_PNG_READ_OFFSET = 0;
   PNG_LENGTH = png_length; 
@@ -72,7 +69,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
 
   png_read_png(pm->read_ptr, pm->info_ptr, transforms, NULL);
 
-  //Now that its being read and transformed, its size will differ
+  //Now that it was read and transformed, its size will differ
   PNG_LENGTH = 0; 
 
   //Lets collect our metadata
@@ -116,12 +113,23 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
   void *write_io_ptr = png_get_io_ptr(pm->write_ptr);
   png_set_write_fn(pm->write_ptr, write_io_ptr, my_png_write_fn, my_png_dummy_flush);
 
+  //Make sure we use all filters
   png_set_filter(pm->write_ptr, 0,
       PNG_FILTER_NONE  | PNG_FILTER_VALUE_NONE |
       PNG_FILTER_SUB   | PNG_FILTER_VALUE_SUB  |
       PNG_FILTER_UP    | PNG_FILTER_VALUE_UP   |
       PNG_FILTER_AVG   | PNG_FILTER_VALUE_AVG  |
       PNG_FILTER_PAETH | PNG_FILTER_VALUE_PAETH);
+
+  //Set our comment
+  struct png_text_struct comment_struct;
+
+  comment_struct.compression = -1;
+  comment_struct.key = "Glitched by pnglitch.me";
+  comment_struct.text = NULL;
+  comment_struct.text_length = 0;
+  
+  png_set_text(pm->write_ptr, pm->info_ptr, &comment_struct, 1);
 
   //Using callback my_png_write_fn, output is written to ENTIRE_PNG_BUF
   //PNG_LENGTH will be updated too
@@ -133,50 +141,53 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
 
   //Now that libpng is done converting the image, 
   //and we have it in the buffer, we process it by hand with zlib
-
   struct z_stream_s inflate_stream;
   my_init_zlib(&inflate_stream);
   inflateInit(&inflate_stream);
 
+  //Pointer to keep track of where we are
   unsigned char *pngp = ENTIRE_PNG_BUF;
 
-  pngp += 8; //Skip PNG Signature
+  //Skip PNG Signature
+  pngp += 8; 
 
   //Get Header
   unsigned char ihdr_bytes_buf[4+4+13+4]; // size + label + content + crc
-
   buf_read(ihdr_bytes_buf, &pngp, 4+4+13+4);
-  //buf_slice(pngi, 4+13+4, ihdr_bytes_buf, ENTIRE_PNG_BUF);
 
   //When we run into non-idat chunks, we will want to preserve them.
   //The spec says there'e no chunk that NEEDS to go after IDAT,
   //so we will simply concatenate all of these chunks into a buffer
   //then write them all at once after the IHDR
+  
+  //ancillary chunks, eg comments
+  unsigned char *ancil_chunks_buf = calloc(1,1);
+  long long ancil_chunks_len = 0;
 
-  long long zipped_idats_len = 0; //Length of all idats as we read them
   unsigned char *unzipped_idats_buf = calloc(1, 1);
-
-  int chunk_count = 0;
-
   long unzip_buf_len = 1;
   long unzip_buf_offset = 0;
 
-  unsigned long accum_png_len = 8 + (4+4+13+4) ;
+  long long zipped_idats_len = 0; //Length of all idats as we read them
+
+  unsigned long accum_png_len = 8 + (4+4+13+4);
+
+  int chunk_count = 0;
 
   while (1) {
     unsigned char chunk_label[4];
     unsigned char chunk_len_buf[4];
 
-    //Get the chunk length
-    //buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
-    //pngi += 4; 
-
     DEBUG_PRINT(("Reading chunk len\n"));
     buf_read(chunk_len_buf, &pngp, 4);
+
+    //dbg_printbuffer(chunk_len_buf, 4);
+    
+    //first 4 bytes are the length of data section
     long chunk_len = four_bytes_to_int(chunk_len_buf);
 
     accum_png_len += chunk_len + 4 + 4 + 4; // plus len, crc, label
-    DEBUG_PRINT(("at %d --> %d\n", accum_png_len, PNG_LENGTH));
+    DEBUG_PRINT(("at %lu --> %lld\n", accum_png_len, PNG_LENGTH));
 
     if (accum_png_len >= PNG_LENGTH)
       break;
@@ -186,13 +197,6 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
     buf_read(chunk_label, &pngp, 4);
 
     chunk_count += 1;
-
-
-    /*if (memcmp(chunk_label, "IEND", 4) == 0) {
-      DEBUG_PRINT(("Leaving loop\n"));
-      break;
-    }*/
-
 
     if (memcmp(chunk_label, "IDAT", 4) == 0) {
 
@@ -239,7 +243,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
                         last inflate len was '%ld' \n",
                 ret, inflate_stream.total_out, last_inflate_len));
 
-          print_error_html("Error processing image!");
+          print_error_html(PROCESS_ERROR);
           free(in_chunk_bytes);
           free(unzipped_idats_buf);
           free(ENTIRE_PNG_BUF);
@@ -253,9 +257,34 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
     } else {
       DEBUG_PRINT(("Chunk %d not IDAT:\n", chunk_count));
       dbg_printbuffer(chunk_label, 4);
-      pngp += chunk_len + 4; //skip chunk and crc
+      //pngp += chunk_len + 4; //skip chunk and crc
+      DEBUG_PRINT(("anc: %lld\n", ancil_chunks_len));
+      
+      ancil_chunks_buf = realloc(ancil_chunks_buf, ancil_chunks_len + 4 + 4 + chunk_len + 4);
+      append_bytes(ancil_chunks_buf, chunk_len_buf, &ancil_chunks_len, 4);
+      append_bytes(ancil_chunks_buf, chunk_label, &ancil_chunks_len, 4);
+
+      unsigned char *chunk_data = malloc(chunk_len);
+      buf_read(chunk_data, &pngp, chunk_len);
+
+      append_bytes(ancil_chunks_buf, chunk_data, &ancil_chunks_len, chunk_len );
+
+      unsigned char chunk_crc_buf[4];
+      buf_read(chunk_crc_buf, &pngp, 4);
+
+      append_bytes(ancil_chunks_buf, chunk_crc_buf, &ancil_chunks_len, 4);
+
+      DEBUG_PRINT(("anc: %lld\n", ancil_chunks_len));
+
+      free(chunk_data);
+
+      //pngp += chunk_len ;
+      
     }
   }
+
+  
+  dbg_printbuffer(ancil_chunks_buf, ancil_chunks_len);
 
   unsigned long unzipped_idats_len = inflate_stream.total_out; 
   unzipped_idats_buf = realloc(unzipped_idats_buf, unzipped_idats_len);
@@ -314,11 +343,13 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
 
     FILE *outfp = fopen(path, "wb");
 
-    write_glitched_image(glitched_idats, glitched_idats_len, ihdr_bytes_buf, outfp);
+    write_glitched_image(glitched_idats, glitched_idats_len, ihdr_bytes_buf, ancil_chunks_buf, ancil_chunks_len, outfp);
 
     fclose(outfp);
     free(glitched_idats);
   }
+
+  free(ancil_chunks_buf);
 
   char *ofp = out_file_paths;
   int o = path_max_len; //offset
@@ -396,25 +427,28 @@ int main(int argc, char* argv[]) {
 
     unsigned char *png_buf = calloc(content_length, 1);
 
-    long png_length = get_uploaded_file_buf(png_buf, content_length,
+    PNG_LENGTH = get_uploaded_file_buf(png_buf, content_length,
         form_boundary_buf, form_boundary_buf_len);
 
     free(form_boundary_buf);
-    DEBUG_PRINT(("Size of uploaded png: %ld\n", png_length));
+    DEBUG_PRINT(("Size of uploaded png: %ld\n", PNG_LENGTH));
 
-    if (png_length <= 0) {
+    if (PNG_LENGTH <= 0) {
       free(form_filename_buf);
       free(png_buf);
       print_error_html("Error processing form upload");
       continue;
     }
 
-    png_buf = realloc(png_buf, png_length);
+    png_buf = realloc(png_buf, PNG_LENGTH);
 
-    begin(form_filename, png_buf, png_length);
+    begin(form_filename, png_buf, PNG_LENGTH);
 
     free(form_filename_buf);
   }
+
+  //To properly free memory
+  OS_LibShutdown();
 
   free(success_template);
   free(error_template);

@@ -16,7 +16,10 @@ struct ihdr_infos_s {
   unsigned int scanline_len;
 };
 
-void write_glitched_image(unsigned char *glitched_idats, long glitched_idats_len, unsigned char *ihdr_bytes_buf, FILE *fp);
+void write_glitched_image(unsigned char *glitched_idats, 
+    long glitched_idats_len, 
+    unsigned char *ihdr_bytes_buf, unsigned char *ancil_buf,
+    long long ancil_buf_len, FILE *fp);
 void glitch_random(unsigned char *data, unsigned long data_len, unsigned int scanline_len, float freq);
 void glitch_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len, int filter);
 void glitch_random_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len);

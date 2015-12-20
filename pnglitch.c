@@ -115,7 +115,8 @@ void glitch_random(unsigned char *data, unsigned long data_len, unsigned int sca
 }
 
 void write_glitched_image(unsigned char *glitched_idats, 
-    long glitched_idats_len, unsigned char *ihdr_bytes_buf, FILE* fp) {
+    long glitched_idats_len, unsigned char *ihdr_bytes_buf,
+    unsigned char *ancil_buf, long long ancil_len, FILE* fp) {
 
 
   uint32_t idat_len = htonl(glitched_idats_len);
@@ -124,8 +125,8 @@ void write_glitched_image(unsigned char *glitched_idats,
   uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, glitched_idats_len));
 
   fwrite(PNG_SIGNATURE, 1, 8, fp);
-  //fwrite(&ihdr_size, sizeof(ihdr_size), 1, fp);
   fwrite(ihdr_bytes_buf, 1, 4+4+13+4, fp);
+  fwrite(ancil_buf, 1, ancil_len, fp);
   fwrite(&idat_len, sizeof(idat_len), 1, fp);
   fwrite(IDAT_HDR_BYTES, 1, 4, fp);
   fwrite(glitched_idats, 1, glitched_idats_len, fp); //
