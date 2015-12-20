@@ -5,20 +5,26 @@
 #include <fcgi_stdio.h>
 #include <zlib.h>
 #include <stdint.h>
-#include <arpa/inet.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <libgen.h>
 
-#include "library_helpers.h"
-#include "fcgi_helpers.h"
-#include "common.h"
+#define DEBUG
+
+#include "libs.h"
+#include "webio.h"
+#include "globals.h"
+#include "bufs.h"
+#include "pnglitch.h"
+
+#ifdef DEBUG
 #include "debug.h"
-#include "web.h"
+#endif
+
 
 //Globals, needed for callbacks
 long long MY_PNG_READ_OFFSET = 0;
-BYTE *ENTIRE_PNG_BUF;
+unsigned char *ENTIRE_PNG_BUF;
 long long PNG_LENGTH = 0; 
 
 /* Use Libpng to tansform the input into into RGB format 
@@ -27,128 +33,9 @@ long long PNG_LENGTH = 0;
  * Then, glitch this buffer manually
  */
 
-BYTE PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //len 8
-BYTE PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //len 12
-BYTE IDAT_HDR_BYTES[] = {73, 68, 65, 84};
-BYTE IHDR_HDR_BYTES[] = {73, 72, 68, 82};
-BYTE IHDR_BYTES_BUF[4+13+4]; //'IHDR' + data + crc
-
-struct ihdr_infos_s {
-  //libpng provided
-  ulong width;
-  ulong height;
-  ulong bit_depth;
-  ulong color_type;
-  ulong compression_type;
-  ulong filter_method;
-  ulong interlace_type;
-
-  //Calculated
-  ulong bytes_per_pixel;
-  ulong scanline_len;
-};
-
-//Takes uncompressed concated IDAT buffer
-void glitch_random_filter(BYTE *data, ulonglong data_len, uint scanline_len) {
-  DEBUG_PRINT(("\nGlitching offsets with random\n"));
-  for (ulonglong i=0; i<data_len; i += scanline_len) {
-    DEBUG_PRINT(("%llu (%d)", i, data[i]));
-    data[i] = rand()%5;
-  }
-}
-
-void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
-  DEBUG_PRINT(("\nGlitching offsets with %d\n", filter));
-  for (ulonglong i=0; i<data_len; i += scanline_len) {
-    DEBUG_PRINT(("%llu (%d) ", i, data[i]));
-    data[i] = filter;
-  }
-}
 
 
-void glitch_random(BYTE *data, ulonglong data_len, uint scanline_len, double freq) {
-
-  srand(84677210);
-  long glitches = (long) (((double) data_len) * freq);
-
-  // The plus one includes the filter byte
-  for (uint32_t i = 0; i < glitches; i++) {
-
-    uint64_t spot = ((rand() << 31) | rand())%data_len;
-
-    // Protects filter byte from being overwritten
-    if ((spot % scanline_len) == 0)
-      continue;
-
-    data[spot] = rand()%256;
-  }
-}
-
-BYTE *zip_idats(BYTE *raw_data, ulong data_len, long long *compressed_length) {
-
-  DEBUG_PRINT(("Zipping glitched buffer length %ld\n", data_len));
-
-  //Init a new compressing zlib
-  int ret;
-  struct z_stream_s deflate_stream;
-  my_init_zlib(&deflate_stream);
-  ret = deflateInit(&deflate_stream, Z_NO_COMPRESSION);//Z_DEFAULT_COMPRESSION);
-  if (ret != Z_OK) 
-    error_fatal(-1, "zlib deflate init", "ret != Z_OK");
-
-  long zipped_offset = 0;
-  long zipped_len = 1000;
-  //This grows
-  BYTE *zipped_idats = calloc(zipped_len, 1);
-
-  deflate_stream.next_in = raw_data; 
-  deflate_stream.avail_in = data_len; 
-  do {  // This compresses
-
-    deflate_stream.next_out = (zipped_idats + zipped_offset); 
-    deflate_stream.avail_out = zipped_len - zipped_offset; 
-
-    long prevtotal = deflate_stream.total_out;
-
-    ret = deflate(&deflate_stream, Z_FINISH);
-
-    long last_deflate_len = deflate_stream.total_out - prevtotal;
-    zipped_offset += last_deflate_len;
-
-    //needs bigger buffer
-    if (ret == Z_STREAM_END) 
-      break;
-    else if ( ret == Z_DATA_ERROR ||
-              ret == Z_BUF_ERROR  ||
-             (ret == Z_OK && deflate_stream.avail_out == 0)) 
-    {
-      zipped_len = (zipped_len*2) + 1;
-      DEBUG_PRINT(("Setting bigger buffer (%ld)\n", zipped_len));
-      zipped_idats = realloc(zipped_idats, zipped_len);
-      continue;
-    }
-    else if (ret == Z_DATA_ERROR || ret == Z_DATA_ERROR) {
-      DEBUG_PRINT(("Error in zip_idats: ret was %d, \
-            total out was %ld, last deflate len was %ld\n",
-            ret, deflate_stream.total_out, last_deflate_len));
-      print_error_html("Error compressing PNG image!");
-      free(zipped_idats);
-      return NULL;
-    }
-  } while (1);
-
-  zipped_idats = realloc(zipped_idats, deflate_stream.total_out);
-  DEBUG_PRINT(("Compressed %ld size buffer to %ld\n", data_len, deflate_stream.total_out));
-
-  *compressed_length = deflate_stream.total_out;
-
-  deflateEnd(&deflate_stream);
-
-  return(zipped_idats);
-}
-
-
-void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
+void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
 
   MY_PNG_READ_OFFSET = 0;
   PNG_LENGTH = png_length; 
@@ -257,11 +144,13 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   pngi += 4; //Skip IHDR len
 
   //Get Header
-  buf_slice(pngi, 4+13+4, IHDR_BYTES_BUF, ENTIRE_PNG_BUF);
+
+  unsigned char ihdr_bytes_buf[4+13+4];
+  buf_slice(pngi, 4+13+4, ihdr_bytes_buf, ENTIRE_PNG_BUF);
 
   pngi += 4+13+4; //Skip All of IHDR
 
-  BYTE tmpbytes[4];
+  unsigned char tmpbytes[4];
 
   //When we run into non-idat chunks, we will want to preserve them.
   //The spec says there'e no chunk that NEEDS to go after IDAT,
@@ -271,7 +160,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   //TODO: instead of using PNGI, use pointer with arithmetic
 
   long long zipped_idats_len = 0; //Length of all idats as we read them
-  BYTE *unzipped_idats_buf = calloc(1, 1);
+  unsigned char *unzipped_idats_buf = calloc(1, 1);
 
   int chunk_count = 0;
 
@@ -283,14 +172,14 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     //Get the chunk length
     buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
     pngi += 4; 
-    long chunk_len = _4bytesToInt(tmpbytes);
+    long chunk_len = four_bytes_to_int(tmpbytes);
 
     //Now, what is the header name?
     buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
 
     chunk_count += 1;
 
-    if (memcmp(tmpbytes, IDAT_HDR_BYTES, 4) == 0) {
+    if (memcmp(tmpbytes, "IDAT", 4) == 0) {
 
       DEBUG_PRINT(("Chunk %d is IDAT\n", chunk_count));
 
@@ -298,7 +187,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
       zipped_idats_len += chunk_len;
 
-      BYTE *in_chunk_bytes = calloc(chunk_len, 1);
+      unsigned char *in_chunk_bytes = calloc(chunk_len, 1);
       bzero(in_chunk_bytes, chunk_len);
       buf_slice(pngi, chunk_len, in_chunk_bytes, ENTIRE_PNG_BUF);
 
@@ -354,7 +243,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     }
   }
 
-  long long unzipped_idats_len = inflate_stream.total_out; 
+  unsigned long unzipped_idats_len = inflate_stream.total_out; 
   unzipped_idats_buf = realloc(unzipped_idats_buf, unzipped_idats_len);
 
   free(ENTIRE_PNG_BUF);
@@ -387,10 +276,10 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
         glitch_filter(unzipped_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, g);
     }
 
-    long long rezipped_idats_len = 0;
-    BYTE *REZIPPED_IDATS = zip_idats(unzipped_idats_buf, unzipped_idats_len, &rezipped_idats_len);
+    long long glitched_idats_len = 0;
+    unsigned char *glitched_idats= zip_idats(unzipped_idats_buf, unzipped_idats_len, &glitched_idats_len);
 
-    if (REZIPPED_IDATS == NULL) {
+    if (glitched_idats == NULL) {
       free (unzipped_idats_buf);
       return;
     }
@@ -402,11 +291,6 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     // -Idats
     // -IEND
 
-    uint32_t ihdr_size = htonl(13);
-    uint32_t idat_len = htonl(rezipped_idats_len);
-    uint32_t idat_data_crc = crc32(0L, REZIPPED_IDATS, rezipped_idats_len); 
-    uint32_t idat_ihdr_crc = crc32(0L, IDAT_HDR_BYTES, 4); 
-    uint32_t idat_crc = htonl(crc32_combine(idat_ihdr_crc, idat_data_crc, rezipped_idats_len));
 
     char* path = out_file_paths + (g * path_max_len);
 
@@ -416,17 +300,10 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
 
     FILE *outfp = fopen(path, "wb");
 
-    fwrite(PNG_SIGNATURE, 1, 8, outfp);
-    fwrite(&ihdr_size, sizeof(ihdr_size), 1, outfp);
-    fwrite(IHDR_BYTES_BUF, 1, 4+13+4, outfp);
-    fwrite(&idat_len, sizeof(idat_len), 1, outfp);
-    fwrite(IDAT_HDR_BYTES, 1, 4, outfp);
-    fwrite(REZIPPED_IDATS, 1, rezipped_idats_len, outfp);
-    fwrite(&idat_crc, sizeof(idat_crc), 1, outfp);
-    fwrite(PNG_IEND_CHUNK, 1, 12, outfp);
+    write_glitched_image(glitched_idats, glitched_idats_len, ihdr_bytes_buf, outfp);
 
     fclose(outfp);
-    free(REZIPPED_IDATS);
+    free(glitched_idats);
   }
 
   char *ofp = out_file_paths;
@@ -476,7 +353,7 @@ int main(int argc, char* argv[]) {
     bzero(form_meta_buf, MAX_FORM_META_LENGTH);
     int form_meta_buf_sz  = get_form_meta_buf(form_meta_buf);
 
-    //dbg_printbuffer((BYTE*)form_meta_buf, form_meta_buf_sz);
+    //dbg_printbuffer((unsigned char*)form_meta_buf, form_meta_buf_sz);
 
     if (form_meta_buf_sz <= 0) {
       free(form_boundary_buf);
@@ -503,7 +380,7 @@ int main(int argc, char* argv[]) {
       continue;
     }
 
-    BYTE *png_buf = calloc(content_length, 1);
+    unsigned char *png_buf = calloc(content_length, 1);
 
     long png_length = get_uploaded_file_buf(png_buf, content_length,
         form_boundary_buf, form_boundary_buf_len);

@@ -4,10 +4,11 @@
 #include <stdio.h>
 #include <setjmp.h>
 
-#include "common.h"
-#include "library_helpers.h"
+#include "bufs.h"
+#include "webio.h"
+#include "globals.h"
+#include "libs.h"
 #include "debug.h"
-#include "web.h"
 
 void my_init_zlib(z_stream *s) {
   s->zalloc = Z_NULL;

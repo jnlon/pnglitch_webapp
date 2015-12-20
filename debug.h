@@ -1,9 +1,9 @@
 #ifndef DEBUG_H_
 #define DEBUG_H_
 
-#include "common.h"
-
 #define DEBUG
+
+#include <fcgi_stdio.h>
 
 #ifdef DEBUG
 # define DEBUG_PRINT(x) printf x
@@ -13,7 +13,7 @@
 
 void error(int code, char* obj, char* msg); 
 void error_fatal(int code, char* obj, char* msg); 
-void dump_buf_to_file(char* filename, BYTE *buf, long length);
-void dbg_printbuffer(BYTE *buf, int buf_len);
+void dump_buf_to_file(char* filename, unsigned char *buf, long length);
+void dbg_printbuffer(unsigned char *buf, int buf_len);
 
 #endif
