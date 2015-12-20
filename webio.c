@@ -146,8 +146,6 @@ long get_uploaded_file_buf(unsigned char *upload, long content_length,
     return -1;
   }
 
-  dbg_printbuffer(upload, r);
-
   //C points to start of PNG file
   unsigned char *c = upload;
   ulong png_length = 0;
@@ -157,9 +155,6 @@ long get_uploaded_file_buf(unsigned char *upload, long content_length,
     c++;
     png_length++;
   }
-
-
-  dbg_printbuffer(upload, png_length);
 
   return png_length;
 }

@@ -138,26 +138,20 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
   my_init_zlib(&inflate_stream);
   inflateInit(&inflate_stream);
 
-  long pngi = 0;
+  unsigned char *pngp = ENTIRE_PNG_BUF;
 
-  pngi += 8; //Skip PNG Signature
-  pngi += 4; //Skip IHDR len
+  pngp += 8; //Skip PNG Signature
 
   //Get Header
+  unsigned char ihdr_bytes_buf[4+4+13+4]; // size + label + content + crc
 
-  unsigned char ihdr_bytes_buf[4+13+4];
-  buf_slice(pngi, 4+13+4, ihdr_bytes_buf, ENTIRE_PNG_BUF);
-
-  pngi += 4+13+4; //Skip All of IHDR
-
-  unsigned char tmpbytes[4];
+  buf_read(ihdr_bytes_buf, &pngp, 4+4+13+4);
+  //buf_slice(pngi, 4+13+4, ihdr_bytes_buf, ENTIRE_PNG_BUF);
 
   //When we run into non-idat chunks, we will want to preserve them.
   //The spec says there'e no chunk that NEEDS to go after IDAT,
   //so we will simply concatenate all of these chunks into a buffer
   //then write them all at once after the IHDR
-  
-  //TODO: instead of using PNGI, use pointer with arithmetic
 
   long long zipped_idats_len = 0; //Length of all idats as we read them
   unsigned char *unzipped_idats_buf = calloc(1, 1);
@@ -167,29 +161,48 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
   long unzip_buf_len = 1;
   long unzip_buf_offset = 0;
 
-  while (pngi < PNG_LENGTH) {
+  unsigned long accum_png_len = 8 + (4+4+13+4) ;
+
+  while (1) {
+    unsigned char chunk_label[4];
+    unsigned char chunk_len_buf[4];
 
     //Get the chunk length
-    buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
-    pngi += 4; 
-    long chunk_len = four_bytes_to_int(tmpbytes);
+    //buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
+    //pngi += 4; 
 
-    //Now, what is the header name?
-    buf_slice(pngi, 4, tmpbytes, ENTIRE_PNG_BUF);
+    DEBUG_PRINT(("Reading chunk len\n"));
+    buf_read(chunk_len_buf, &pngp, 4);
+    long chunk_len = four_bytes_to_int(chunk_len_buf);
+
+    accum_png_len += chunk_len + 4 + 4 + 4; // plus len, crc, label
+    DEBUG_PRINT(("at %d --> %d\n", accum_png_len, PNG_LENGTH));
+
+    if (accum_png_len >= PNG_LENGTH)
+      break;
+
+    //read the chunk label (name of this header)
+    DEBUG_PRINT(("Reading chunk label\n"));
+    buf_read(chunk_label, &pngp, 4);
 
     chunk_count += 1;
 
-    if (memcmp(tmpbytes, "IDAT", 4) == 0) {
+
+    /*if (memcmp(chunk_label, "IEND", 4) == 0) {
+      DEBUG_PRINT(("Leaving loop\n"));
+      break;
+    }*/
+
+
+    if (memcmp(chunk_label, "IDAT", 4) == 0) {
 
       DEBUG_PRINT(("Chunk %d is IDAT\n", chunk_count));
-
-      pngi += 4; //Skip over header
 
       zipped_idats_len += chunk_len;
 
       unsigned char *in_chunk_bytes = calloc(chunk_len, 1);
       bzero(in_chunk_bytes, chunk_len);
-      buf_slice(pngi, chunk_len, in_chunk_bytes, ENTIRE_PNG_BUF);
+      buf_read(in_chunk_bytes, &pngp, chunk_len);
 
       unzipped_idats_buf = realloc(unzipped_idats_buf, unzip_buf_len);
 
@@ -235,11 +248,12 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, ulong png_length) {
       } while (inflate_stream.avail_in != 0);
 
       free(in_chunk_bytes);
-      pngi += chunk_len + 4; //+ CRC
+      pngp += 4; // skip this idat's CRC
 
     } else {
       DEBUG_PRINT(("Chunk %d not IDAT:\n", chunk_count));
-      pngi += chunk_len + 8;
+      dbg_printbuffer(chunk_label, 4);
+      pngp += chunk_len + 4; //skip chunk and crc
     }
   }
 

@@ -1,9 +1,9 @@
 #ifndef DEBUG_H_
 #define DEBUG_H_
 
-#define DEBUG
-
 #include <fcgi_stdio.h>
+
+#define DEBUG
 
 #ifdef DEBUG
 # define DEBUG_PRINT(x) printf x

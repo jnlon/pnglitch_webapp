@@ -10,5 +10,6 @@ void append_bytes(BYTE *basebuf, BYTE *inbuf, int base_offset, int inbuf_length)
 void buf_slice(long start, long len, BYTE* result, BYTE* data);
 void int_to_four_bytes(uint i, BYTE *buf);
 unsigned int four_bytes_to_int(BYTE bb[]);
+void buf_read(unsigned char *dst, unsigned char **src, int to_read);
 
 #endif

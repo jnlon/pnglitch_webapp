@@ -1,7 +1,8 @@
-#include "bufs.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "debug.h"
+#include "bufs.h"
 
 void int_to_four_bytes(uint i, BYTE *buf) {
   buf[0] = ((i >> 24) & 0xFF);
@@ -17,6 +18,18 @@ unsigned int four_bytes_to_int(BYTE bb[]) {
   uint b4 = bb[3] & 0x0000FF;
 
   return (uint)((b1 << 24) | (b2 << 16) | (b3 << 8) | b4);
+}
+
+void buf_read(unsigned char *dst, unsigned char **src, int to_read) {
+
+  //printf("reading %d\n", to_read);
+
+  for (int i=0;i<to_read;i++) {
+    dst[i] = src[0][i];
+    //DEBUG_PRINT(("%d ", dst[i]));
+  }
+
+  src[0] += to_read;
 }
 
 void buf_slice(long start, long len, BYTE* result, BYTE* data)  {

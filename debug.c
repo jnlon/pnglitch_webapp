@@ -1,6 +1,7 @@
-#include "bufs.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include "bufs.h"
+#include "debug.h"
 
 void error_fatal(int code, char* obj, char* msg) {
   fprintf(stderr,"%s: %s\n", obj, msg);
