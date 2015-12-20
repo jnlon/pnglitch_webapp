@@ -13,11 +13,11 @@
 
 int get_form_boundary(char* boundary) {
 
-  //Look until first newline, this is the content boundary
+  //Everything until \r\n (inclusive) is part of the boundary
   int bi = 0;
   while (1) {
     boundary[bi] = getc(stdin);
-    if (boundary[bi] == '\n')
+    if (bi >= 1 && boundary[bi] == '\n' && boundary[bi-1] == '\r')
       break;
 
     if (bi >= MAX_FORM_BOUNDARY_LENGTH) {
@@ -26,7 +26,7 @@ int get_form_boundary(char* boundary) {
     }
     bi++;
   }
-  return bi;
+  return bi+1;
 }
 
 long get_content_length() {
@@ -54,17 +54,19 @@ long get_content_length() {
   return(content_length);
 }
 
-
 int get_form_meta_buf(char* buf) {
 
   int sig_i = 0, i = 0;
   int begin_request_sig[] = {13, 10, 13, 10};
 
-  while(sig_i <= 3) { 
+  while(i < MAX_FORM_META_LENGTH) { 
+
+    if (feof(stdin)) {
+      DEBUG_PRINT(("End of form (\\r\\n) not found\n"));
+      return -1;
+    }
 
     int byte = getc(stdin);
-
-    putchar(byte);
 
     buf[i] = byte;
 
@@ -73,39 +75,40 @@ int get_form_meta_buf(char* buf) {
     else
       sig_i = 0;
 
-    //Form meta stuff, should not be this long
-    if (i >= MAX_FORM_META_LENGTH) {
-      DEBUG_PRINT(("Past max meta length!\n"));
-      free(buf);
-      return -1;
-    }
     i++;
+
+    if (sig_i == 4) {
+      DEBUG_PRINT(("Form meta length is %d\n", i));
+      return i;
+    }
   }
 
-  return i;
+  DEBUG_PRINT(("Form upload is too big (max: %d)\n", MAX_FORM_META_LENGTH));
+  return -1;
 }
 
 long get_uploaded_file_buf(unsigned char *upload, long content_length, 
     char *form_boundary, int form_boundary_len) {
 
   //TODO: is getc() slow reading from web server?
-  for (int i=0;i<content_length;i++) {
+  int r = 0;
+  for (r=0;r<content_length;r++) {
     char x = getc(stdin);
     if (feof(stdin))
       break;
-    upload[i] = x;
+    upload[r] = x;
   }
 
   //Now upload buffer contains the file as well as
   //trailing form metadata from browser
-
   unsigned char *end_ptr = memmem(upload, content_length, form_boundary, form_boundary_len);
 
   if (end_ptr == NULL) {
     DEBUG_PRINT(("Cannot find end-of-form boundary\n"));
-    free(upload);
     return -1;
   }
+
+  dbg_printbuffer(upload, r);
 
   //C points to start of PNG file
   unsigned char *c = upload;
@@ -116,6 +119,9 @@ long get_uploaded_file_buf(unsigned char *upload, long content_length,
     c++;
     png_length++;
   }
+
+
+  dbg_printbuffer(upload, png_length);
 
   return png_length;
 }
@@ -129,8 +135,10 @@ char *get_form_filename(char* buf, char* filename) {
     return NULL;
   }
 
+  //Now at first quote
   fname_begin += 10;
 
+  //pointer to last quote
   char *fname_end = strchr(fname_begin, '"');
 
   if (fname_end == NULL) {

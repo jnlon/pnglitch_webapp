@@ -31,16 +31,14 @@ void dump_buf_to_file(char* filename, BYTE *buf, long length) {
   printf("Writ %s\n",filename );
 }
 
-void print_int_bytes(BYTE *buf, int x) {
+void dbg_printbuffer(BYTE *buf, int len) {
 #ifdef DEBUG
-  for (int i=0;i<x;i++)
-    printf("%d ", buf[i]);
-#endif
-}
-
-void print_chr_bytes(BYTE *buf, int x) {
-#ifdef DEBUG
-  for (int i=0;i<x;i++)
+  DEBUG_PRINT(("\n/// char buffer ///\n"));
+  for (int i=0;i<len;i++)
     putchar(buf[i]);
+  DEBUG_PRINT(("\n/// int buffer ///\n"));
+  for (int i=0;i<len;i++)
+    printf("%d ", buf[i]);
+  DEBUG_PRINT(("\n///\n"));
 #endif
 }

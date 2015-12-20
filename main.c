@@ -51,7 +51,7 @@ struct ihdr_infos_s {
 
 //Takes uncompressed concated IDAT buffer
 void glitch_random_filter(BYTE *data, ulonglong data_len, uint scanline_len) {
-  DEBUG_PRINT(("Glitching offsets with random\n"));
+  DEBUG_PRINT(("\nGlitching offsets with random\n"));
   for (ulonglong i=0; i<data_len; i += scanline_len) {
     DEBUG_PRINT(("%llu (%d)", i, data[i]));
     data[i] = rand()%5;
@@ -59,7 +59,7 @@ void glitch_random_filter(BYTE *data, ulonglong data_len, uint scanline_len) {
 }
 
 void glitch_filter(BYTE *data, ulonglong data_len, uint scanline_len, int filter) {
-  DEBUG_PRINT(("Glitching offsets with %d\n", filter));
+  DEBUG_PRINT(("\nGlitching offsets with %d\n", filter));
   for (ulonglong i=0; i<data_len; i += scanline_len) {
     DEBUG_PRINT(("%llu (%d) ", i, data[i]));
     data[i] = filter;
@@ -160,7 +160,6 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     return;
   }
 
-
   DEBUG_PRINT(("Buf is %lld bytes\n", PNG_LENGTH));
 
   my_png_meta *pm = calloc(1, sizeof(my_png_meta));
@@ -169,9 +168,9 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
   //If libpng errors, we end up here
   if (setjmp(png_jmpbuf(pm->read_ptr))) {
     DEBUG_PRINT(("libpng called setjmp!\n"));
-    png_destroy_read_struct(&pm->read_ptr, &pm->info_ptr, &pm->end_info);
+    my_deinit_libpng(pm);
+    free(ENTIRE_PNG_BUF);
     print_error_html("Error processing image! It's probably corrupt!");
-    free(pm);
     return;
   }
 
@@ -453,7 +452,7 @@ int main(int argc, char* argv[]) {
 
     if (content_length <= 0) {
       switch (content_length) {
-        case -1: print_error_html((UPLOAD_ERROR)); break;
+        case -1: print_error_html(UPLOAD_ERROR); break;
         case -2: print_error_html("The uploaded file is too big! Maximum file size is 10MB"); break;
         case -3: print_error_html("The file was too small! Please upload a valid PNG file!"); break;
         default: print_error_html(UPLOAD_ERROR); 
@@ -461,23 +460,28 @@ int main(int argc, char* argv[]) {
       continue;
     }
 
-    char form_boundary[MAX_FORM_BOUNDARY_LENGTH];
-    memset(form_boundary, MAX_FORM_BOUNDARY_LENGTH, 1);
+    char *form_boundary_buf = malloc(MAX_FORM_BOUNDARY_LENGTH);
+    bzero(form_boundary_buf, MAX_FORM_BOUNDARY_LENGTH);
 
-    int form_boundary_len = get_form_boundary(form_boundary);
+    int form_boundary_buf_len = get_form_boundary(form_boundary_buf);
 
-    if (form_boundary_len <= 0) {
+    if (form_boundary_buf_len <= 0) {
       print_error_html("Error processing form upload");
+      free(form_boundary_buf);
       continue;
     }
 
-    form_boundary[form_boundary_len] = '\0';
+    form_boundary_buf = realloc(form_boundary_buf, form_boundary_buf_len);
 
     char* form_meta_buf = calloc(MAX_FORM_META_LENGTH, 1);
     bzero(form_meta_buf, MAX_FORM_META_LENGTH);
     int form_meta_buf_sz  = get_form_meta_buf(form_meta_buf);
 
+    //dbg_printbuffer((BYTE*)form_meta_buf, form_meta_buf_sz);
+
     if (form_meta_buf_sz <= 0) {
+      free(form_boundary_buf);
+      free(form_meta_buf);
       print_error_html("Error processing form upload!");
       continue;
     }
@@ -485,13 +489,17 @@ int main(int argc, char* argv[]) {
     form_meta_buf = realloc(form_meta_buf, form_meta_buf_sz+1);
     form_meta_buf[form_meta_buf_sz] = '\0';
 
-    char form_filename_buf[MAX_FILENAME_LENGTH];
+    char *form_filename_buf = malloc(MAX_FILENAME_LENGTH);
     bzero(form_filename_buf, MAX_FILENAME_LENGTH);
 
-    char *form_filename = get_form_filename(form_meta_buf, form_filename_buf);
+    char *form_filename = 
+      get_form_filename(form_meta_buf, form_filename_buf);
+
+    free(form_meta_buf);
 
     if (form_filename == NULL) {
-      free(form_meta_buf);
+      free(form_filename_buf);
+      free(form_boundary_buf);
       print_error_html("Error processing form upload");
       continue;
     }
@@ -499,11 +507,14 @@ int main(int argc, char* argv[]) {
     BYTE *png_buf = calloc(content_length, 1);
 
     long png_length = get_uploaded_file_buf(png_buf, content_length,
-        form_boundary, form_boundary_len);
+        form_boundary_buf, form_boundary_buf_len);
 
+    free(form_boundary_buf);
     DEBUG_PRINT(("Size of uploaded png: %ld\n", png_length));
 
     if (png_length <= 0) {
+      free(form_filename_buf);
+      free(png_buf);
       print_error_html("Error processing form upload");
       continue;
     }
@@ -512,7 +523,7 @@ int main(int argc, char* argv[]) {
 
     begin(form_filename, png_buf, png_length);
 
-    free(form_meta_buf);
+    free(form_filename_buf);
   }
 
   free(success_template);
