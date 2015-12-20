@@ -21,8 +21,7 @@ long long MY_PNG_READ_OFFSET = 0;
 BYTE *ENTIRE_PNG_BUF;
 long long PNG_LENGTH = 0; 
 
-/*
- * Use Libpng to tansform the input into into RGB format 
+/* Use Libpng to tansform the input into into RGB format 
  * (basically re-encode image using all filter methods)
  * Using the write-callback method, store this data in a shared buffer.
  * Then, glitch this buffer manually
@@ -170,7 +169,7 @@ void begin(char* infname_sans_ext, BYTE *png_buf, ulong png_length) {
     DEBUG_PRINT(("libpng called setjmp!\n"));
     my_deinit_libpng(pm);
     free(ENTIRE_PNG_BUF);
-    print_error_html("Error processing image! It's probably corrupt!");
+    print_error_html("Error processing (likely corrupt) image");
     return;
   }
 
