@@ -5,9 +5,39 @@
 #include <string.h>
 #include <stdlib.h>
 #include <libgen.h>
+#include <unistd.h>
+#include <pthread.h>
+
+#define DEBUG
 
 #include "webio.h"
 #include "debug.h"
+#include "globals.h"
+
+void *thread_delete_files(void *paths) {
+
+  tcount += 1;
+  pthread_mutex_unlock(&mutextcount);
+
+  DEBUG_PRINT(("SLEEPING:\n"));
+
+  usleep(TIME_BEFORE_DELETION);
+
+  for (int i=0;i<NUM_OF_OUTPUT_FILES;i++) {
+    //DEBUG_PRINT(("%d %d:\n" , i, i*MAX_PATH_LENGTH));
+    char *path = ((char*)paths) + (i*MAX_PATH_LENGTH);
+    DEBUG_PRINT(("deleting path %s\n", path));
+    remove(path);
+  }
+
+  free(paths);
+
+  pthread_mutex_lock(&mutextcount);
+  tcount -= 1;
+  pthread_mutex_unlock(&mutextcount);
+
+  pthread_exit(NULL);
+}
 
 char* load_html_template(char *path) {
 

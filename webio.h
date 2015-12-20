@@ -12,6 +12,10 @@
 #define MAX_FORM_META_LENGTH 10000    //multipart/form-data stuff
 #define MAX_CONTENT_LENGTH 10485760L   //10MB
 #define MAX_FILENAME_LENGTH 50        //larger than this will be truncated
+#define MAX_PATH_LENGTH 100         //includes filename and directory path
+#define NUM_OF_OUTPUT_FILES 7
+
+#define TIME_BEFORE_DELETION 4*1000*1000
 
 /*Templates will be malloced in load_html_templates
 These templates will contain format 
@@ -25,6 +29,9 @@ char *get_form_filename(char* buf, char* filename);
 long get_content_length();
 long get_uploaded_file_buf(unsigned char *buf, long content_length, 
     char *form_boundary, int form_boundary_len);
+
+
+void *thread_delete_files(void *paths);
 
 
 char* load_html_template(char *path);

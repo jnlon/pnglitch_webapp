@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <errno.h>
 #include <libgen.h>
+#include <pthread.h>
 
 #define DEBUG
 
@@ -25,6 +26,8 @@ void OS_LibShutdown(void);
 long long MY_PNG_READ_OFFSET;
 unsigned char *ENTIRE_PNG_BUF;
 long long PNG_LENGTH; 
+pthread_mutex_t mutextcount;
+int tcount = 0;
 
 /* Use Libpng to tansform the input into into RGB format 
  * (basically re-encode image using all filter methods)
@@ -32,7 +35,14 @@ long long PNG_LENGTH;
  * Then, glitch this buffer manually
  */
 
-void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length) {
+int get_mutex_tcount() {
+  pthread_mutex_lock(&mutextcount);
+  int tc = tcount;
+  pthread_mutex_unlock(&mutextcount);
+  return tc;
+}
+
+pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length) {
 
   MY_PNG_READ_OFFSET = 0;
   PNG_LENGTH = png_length; 
@@ -40,7 +50,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
 
   if (png_sig_cmp(ENTIRE_PNG_BUF, 0, 8) != 0) {
     print_error_html("Upload is not a valid PNG file!");
-    return;
+    return -1;
   }
 
   DEBUG_PRINT(("Initial png size is %lld bytes\n", PNG_LENGTH));
@@ -54,7 +64,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
     my_deinit_libpng(pm);
     free(ENTIRE_PNG_BUF);
     print_error_html("Error processing (likely corrupt) image");
-    return;
+    return -1;
   }
 
   //Normally a file, but instead make it our buffer
@@ -85,7 +95,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   if (ihdr_infos.color_type != 2) {
     print_error_html("Error processing image!");
     DEBUG_PRINT(("Looks like libpng could not correctly convert to RGB\n"));
-    return;
+    return -1;
   }
 
   //Just in case we want to enable alpha, etc
@@ -222,7 +232,7 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
         free(raw_chunk_buf);
         free(unzip_idats_buf);
         free(ENTIRE_PNG_BUF);
-        return;
+        return -1;
       }
 
       //Moving on
@@ -280,10 +290,9 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   else if (access("pnglitch_c_output", W_OK | X_OK))
     error_fatal(1, "Problem accessing directory", strerror(errno));
 
-  const int path_max_len = 100;
-  char *out_file_paths = malloc(path_max_len*7);
+  char *out_file_paths = malloc(MAX_PATH_LENGTH*NUM_OF_OUTPUT_FILES);
 
-  for (int g=0;g<7;g++) {
+  for (int g=0;g<NUM_OF_OUTPUT_FILES;g++) {
 
     switch(g) {
       case 5:
@@ -301,13 +310,13 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
 
     if (glitched_idats == NULL) {
       free (unzip_idats_buf);
-      return;
+      return -1;
     }
 
 
-    char* path = out_file_paths + (g * path_max_len);
+    char* path = out_file_paths + (g * MAX_PATH_LENGTH);
 
-    snprintf(path, path_max_len, "%s/%s-%d.png", output_dir, infname_sans_ext, g);
+    snprintf(path, MAX_PATH_LENGTH, "%s/%s-%d.png", output_dir, infname_sans_ext, g);
 
     DEBUG_PRINT(("Output file name is %s\n", path));
 
@@ -322,18 +331,29 @@ void begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length)
   free(ancil_chunks_buf);
 
   char *ofp = out_file_paths;
-  int o = path_max_len; //offset
+  int o = MAX_PATH_LENGTH; //offset
   print_success_html(ofp + (o*0), ofp + (o*1), ofp + (o*2),
       ofp + (o*3), ofp + (o*4),ofp + (o*5), ofp + (o*6));
 
-  free(out_file_paths);
+  //Use pthread to delete image after a certain interval
+  pthread_mutex_lock(&mutextcount);
+
+  pthread_t thread;
+  pthread_create(&thread, NULL, thread_delete_files, (void*)ofp);
+  pthread_detach(thread);
+
   free(unzip_idats_buf);
+
+  return thread;
 }
 
 int main(int argc, char* argv[]) {
 
   success_template = load_html_template(SUCCESS_FILE_PATH);
   error_template = load_html_template(ERROR_FILE_PATH);
+
+  //pthread_t user_threads[MAX_USER_THREADS];
+  tcount = 0;
 
   while (FCGI_Accept() >= 0) {
 
@@ -412,12 +432,30 @@ int main(int argc, char* argv[]) {
 
     png_buf = realloc(png_buf, PNG_LENGTH);
 
-    begin(form_filename, png_buf, PNG_LENGTH);
+    pthread_t ret = begin(form_filename, png_buf, PNG_LENGTH);
 
     free(form_filename_buf);
+
+    //wait until some threads finish
+    while (ret != 0) {
+
+      int t = get_mutex_tcount();
+      if (t < MAX_USER_THREADS)
+        break;
+
+      usleep(100000);
+      DEBUG_PRINT(("Max threads reached, pausing\n"));
+    }
   }
 
-  //To properly free memory
+  while (1) {
+    int t = get_mutex_tcount();
+    if (t == 0)
+      break;
+    usleep(100000);
+    DEBUG_PRINT(("Waiting for all threads to close on exit\n"));
+  }
+
   OS_LibShutdown();
 
   free(success_template);
