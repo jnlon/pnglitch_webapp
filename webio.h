@@ -15,7 +15,7 @@
 #define MAX_PATH_LENGTH 100         //includes filename and directory path
 #define NUM_OF_OUTPUT_FILES 7
 
-#define TIME_BEFORE_DELETION 4*1000*1000
+#define TIME_BEFORE_DELETION 40*1000*1000 //40 seconds
 
 /*Templates will be malloced in load_html_templates
 These templates will contain format 
