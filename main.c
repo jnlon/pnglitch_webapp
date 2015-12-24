@@ -10,8 +10,6 @@
 #include <libgen.h>
 #include <pthread.h>
 
-#define DEBUG
-
 #include "libs.h"
 #include "webio.h"
 #include "globals.h"

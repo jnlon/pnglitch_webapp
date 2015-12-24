@@ -5,8 +5,6 @@
 #include <fcgi_stdio.h>
 #include <png.h>
 
-#define DEBUG
-
 #include "libs.h"
 #include "debug.h"
 #include "pnglitch.h"

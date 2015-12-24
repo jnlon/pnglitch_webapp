@@ -8,8 +8,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#define DEBUG
-
 #include "webio.h"
 #include "debug.h"
 #include "globals.h"
@@ -211,13 +209,24 @@ char *get_form_filename(char* buf, char* filename) {
 
   int i=0;
 
+  //put it in filename
   while (i < MAX_FILENAME_LENGTH && fname_begin != fname_end) {
     filename[i] = *fname_begin;
     fname_begin++;
     i++;
   }
 
-  filename[i] = '\0';
+  char *ext_dot = strrchr(filename, '.');
+
+  //DEBUG_PRINT(("fn: %d %p\n", filename, filename));
+  //DEBUG_PRINT(("ext: %d %p\n", ext_dot, ext_dot));
+
+  //No filename or begins with dot
+  if (ext_dot == NULL || filename == ext_dot)
+    filename[i] = '\0'; //make end of form end of string
+  else 
+    ext_dot[0] = '\0'; //make dot end of string
+
 
   //Note: also set directory permissions
   DEBUG_PRINT(("Filename From form: %s (len %d)\n", filename, i));
