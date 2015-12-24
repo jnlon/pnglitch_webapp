@@ -19,7 +19,7 @@ void *thread_delete_files(void *paths) {
 
   usleep(TIME_BEFORE_DELETION);
 
-  for (int i=0;i<NUM_OF_OUTPUT_FILES;i++) {
+  for (int i=0;i<NUM_OUTPUT_FILES;i++) {
     //DEBUG_PRINT(("%d %d:\n" , i, i*MAX_PATH_LENGTH));
     char *path = ((char*)paths) + (i*MAX_PATH_LENGTH);
     DEBUG_PRINT(("deleting path %s\n", path));

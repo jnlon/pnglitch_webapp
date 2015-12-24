@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <libgen.h>
 #include <pthread.h>
+#include <time.h>
 
 #include "libs.h"
 #include "webio.h"
@@ -91,7 +92,9 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
   ihdr_infos.width            = png_get_image_width(pm->read_ptr, pm->info_ptr);
 
   if (ihdr_infos.color_type != 2) {
-    print_error_html("Error processing image!");
+    print_error_html(PROCESS_ERROR);
+    free(ENTIRE_PNG_BUF);
+    my_deinit_libpng(pm);
     DEBUG_PRINT(("Looks like libpng could not correctly convert to RGB\n"));
     return -1;
   }
@@ -105,7 +108,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
     case 4: ihdr_infos.bytes_per_pixel = 2; break; //greyscale w/ alpha 
     case 2: ihdr_infos.bytes_per_pixel = 3; break; //Truecolour (RGB)
     case 6: ihdr_infos.bytes_per_pixel = 4; break; //Truecolour w/ alpha
-    default: error_fatal(1, "ihdr_infos", "Unknown image type"); 
+    default: error_fatal(1, "ihdr_infos", "Unknown image type"); //should never happen
   }
 
   ihdr_infos.scanline_len = (ihdr_infos.bytes_per_pixel * ihdr_infos.width) + 1;
@@ -133,7 +136,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
   struct png_text_struct comment_struct;
 
   comment_struct.compression = -1;
-  comment_struct.key = "-Glitched by pnglitch.me-";
+  comment_struct.key = " Glitched by pnglitch.me ";
   comment_struct.text = NULL;
   comment_struct.text_length = 0;
   
@@ -186,29 +189,28 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
     unsigned char chunk_label[4];
     unsigned char chunk_len_buf[4];
 
-    DEBUG_PRINT(("Reading chunk len\n"));
     buf_read(chunk_len_buf, &pngp, 4);
 
-    //dbg_printbuffer(chunk_len_buf, 4);
-    
     //first 4 bytes are the length of data section
     long chunk_len = four_bytes_to_int(chunk_len_buf);
 
     accum_png_len += chunk_len + 4 + 4 + 4; // plus len, crc, label
     DEBUG_PRINT(("at %lu --> %lld\n", accum_png_len, PNG_LENGTH));
 
+    //leave at end of buffer
     if (accum_png_len >= PNG_LENGTH)
       break;
 
     //read the chunk label (name of this header)
-    DEBUG_PRINT(("Reading chunk label\n"));
     buf_read(chunk_label, &pngp, 4);
+
+    DEBUG_PRINT(("Reading chunk %d with label '%c%c%c%c', size %ld\n",
+          chunk_count, chunk_label[0], chunk_label[1], chunk_label[2],
+          chunk_label[3], chunk_len));
 
     chunk_count += 1;
 
     if (memcmp(chunk_label, "IDAT", 4) == 0) {
-
-      DEBUG_PRINT(("Chunk %d is IDAT\n", chunk_count));
 
       zipped_idats_len += chunk_len;
 
@@ -227,6 +229,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
       //Stop if error
       if (check_uncompress == NULL) {
         print_error_html(PROCESS_ERROR);
+        free(ancil_chunks_buf);
         free(raw_chunk_buf);
         free(unzip_idats_buf);
         free(ENTIRE_PNG_BUF);
@@ -238,89 +241,97 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
       free(raw_chunk_buf);
       pngp += 4; // skip CRC
 
-    } else {
-
-      DEBUG_PRINT(("Chunk %d not IDAT:\n", chunk_count));
-
-      dbg_printbuffer(chunk_label, 4);
+    } else { //This is not an idat
 
       ancil_chunks_buf = realloc(ancil_chunks_buf, 
-          ancil_chunks_len + 4 + 4 + chunk_len + 4);
+          ancil_chunks_len + 4 + 4 + chunk_len + 4); //make room for new data
 
       //append length and label bytes
       append_bytes(ancil_chunks_buf, chunk_len_buf, &ancil_chunks_len, 4);
       append_bytes(ancil_chunks_buf, chunk_label, &ancil_chunks_len, 4);
 
       //append chunk data
-      unsigned char *chunk_data = malloc(chunk_len);
-      buf_read(chunk_data, &pngp, chunk_len);
-      append_bytes(ancil_chunks_buf, chunk_data, &ancil_chunks_len, chunk_len );
+      unsigned char *raw_chunk_buf = calloc(chunk_len, 1);
+      buf_read(raw_chunk_buf, &pngp, chunk_len);
+      append_bytes(ancil_chunks_buf, raw_chunk_buf, &ancil_chunks_len, chunk_len );
 
       //append chunk crc
       unsigned char chunk_crc_buf[4];
       buf_read(chunk_crc_buf, &pngp, 4);
       append_bytes(ancil_chunks_buf, chunk_crc_buf, &ancil_chunks_len, 4);
 
-      free(chunk_data);
+      free(raw_chunk_buf);
 
       DEBUG_PRINT(("ancillary chunks length: %lld\n", ancil_chunks_len));
 
     }
   }
 
-
-  //dbg_printbuffer(ancil_chunks_buf, ancil_chunks_len);
   
+  //buf contains all idats uncompressed, concatenated
   unsigned long unzipped_idats_len = inflate_stream.total_out; 
   unzip_idats_buf = realloc(unzip_idats_buf, unzipped_idats_len);
 
+  //we already have ancillary chunks and idats, don't need the original
   free(ENTIRE_PNG_BUF);
   inflateEnd(&inflate_stream);
 
   DEBUG_PRINT(("Unzipped %lld bytes of data to %lld bytes\n", zipped_idats_len, unzipped_idats_len));
 
-  char output_dir[] = "pnglitch_c_output";
+  char output_dir[] = OUTPUT_DIRECTORY;
 
-  int mkdir_ret = mkdir("pnglitch_c_output", S_IRWXU);
+  int mkdir_ret = mkdir(OUTPUT_DIRECTORY, S_IRWXU);
 
   if (mkdir_ret == -1 && errno != EEXIST)
     error_fatal(1, "problem creating directory", strerror(errno));
-  else if (access("pnglitch_c_output", W_OK | X_OK))
+  else if (access(OUTPUT_DIRECTORY, W_OK | X_OK))
     error_fatal(1, "Problem accessing directory", strerror(errno));
 
-  char *out_file_paths = malloc(MAX_PATH_LENGTH*NUM_OF_OUTPUT_FILES);
+  char *out_file_paths = malloc(MAX_PATH_LENGTH*NUM_OUTPUT_FILES);
 
-  for (int g=0;g<NUM_OF_OUTPUT_FILES;g++) {
+  //add entropy to filename
+  unsigned long unix_time = (unsigned long)clock();
 
+  for (int g=0;g<NUM_OUTPUT_FILES;g++) {
+
+    //do glitches
     switch(g) {
       case 5:
-        glitch_random(unzip_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, 0.0005);
+        glitch_random(unzip_idats_buf, unzipped_idats_len,
+            ihdr_infos.scanline_len, 0.0005);
         break;
       case 6:
-        glitch_random_filter(unzip_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len);
+        glitch_random_filter(unzip_idats_buf, unzipped_idats_len,
+            ihdr_infos.scanline_len);
         break;
       default:
-        glitch_filter(unzip_idats_buf, unzipped_idats_len, ihdr_infos.scanline_len, g);
+        glitch_filter(unzip_idats_buf, unzipped_idats_len,
+            ihdr_infos.scanline_len, g);
     }
 
+    //recompress so we can write them to file
     long long glitched_idats_len = 0;
-    unsigned char *glitched_idats= zip_idats(unzip_idats_buf, unzipped_idats_len, &glitched_idats_len);
+    unsigned char *glitched_idats = zip_idats(unzip_idats_buf,
+        unzipped_idats_len, &glitched_idats_len);
 
     if (glitched_idats == NULL) {
+      print_error_html(PROCESS_ERROR);
       free (unzip_idats_buf);
+      free (ancil_chunks_buf);
       return -1;
     }
 
-
     char* path = out_file_paths + (g * MAX_PATH_LENGTH);
 
-    snprintf(path, MAX_PATH_LENGTH, "%s/%s-%d.png", output_dir, infname_sans_ext, g);
+    snprintf(path, MAX_PATH_LENGTH, "%s/%s-%lu-%d.png", output_dir,
+        infname_sans_ext, unix_time, g);
 
     DEBUG_PRINT(("Output file name is %s\n", path));
 
     FILE *outfp = fopen(path, "wb");
 
-    write_glitched_image(glitched_idats, glitched_idats_len, ihdr_bytes_buf, ancil_chunks_buf, ancil_chunks_len, outfp);
+    write_glitched_image(glitched_idats, glitched_idats_len, ihdr_bytes_buf,
+        ancil_chunks_buf, ancil_chunks_len, outfp);
 
     fclose(outfp);
     free(glitched_idats);
@@ -379,7 +390,7 @@ int main(int argc, char* argv[]) {
     int form_boundary_buf_len = get_form_boundary(form_boundary_buf);
 
     if (form_boundary_buf_len <= 0) {
-      print_error_html("Error processing form upload");
+      print_error_html(UPLOAD_ERROR);
       free(form_boundary_buf);
       continue;
     }
@@ -395,7 +406,7 @@ int main(int argc, char* argv[]) {
     if (form_meta_buf_sz <= 0) {
       free(form_boundary_buf);
       free(form_meta_buf);
-      print_error_html("Error processing form upload!");
+      print_error_html(UPLOAD_ERROR);
       continue;
     }
 
@@ -432,8 +443,8 @@ int main(int argc, char* argv[]) {
       continue;
     }
 
+    //png buff is passed around to callbacks for libpng, it will be free'd there
     png_buf = realloc(png_buf, PNG_LENGTH);
-
     pthread_t ret = begin(form_filename, png_buf, PNG_LENGTH);
 
     free(form_filename_buf);

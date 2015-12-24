@@ -163,7 +163,10 @@ void write_glitched_image(unsigned char *glitched_idats,
     long glitched_idats_len, unsigned char *ihdr_bytes_buf,
     unsigned char *ancil_buf, long long ancil_len, FILE* fp) {
 
-  //What is written (in this order)
+
+  //TODO: is fwrite reliable, should we be checking?
+
+  //Data written (in this order):
   // -PNG signature (constant)
   // -header chunk (IHDR)
   // -ancillary chunks (!IDATs)

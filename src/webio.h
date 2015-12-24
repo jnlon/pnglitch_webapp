@@ -11,10 +11,10 @@
 #define MAX_FORM_META_LENGTH 10000    //multipart/form-data stuff
 #define MAX_CONTENT_LENGTH 10485760L   //10MB
 #define MAX_FILENAME_LENGTH 50        //larger than this will be truncated
-#define MAX_PATH_LENGTH 100         //includes filename and directory path
-#define NUM_OF_OUTPUT_FILES 7
+#define MAX_PATH_LENGTH 120         //includes filename and directory path
+#define NUM_OUTPUT_FILES 7
 
-#define TIME_BEFORE_DELETION 30*1000*1000 //30 seconds
+#define TIME_BEFORE_DELETION 30*1000*1000 //30 seconds 
 
 /*Templates will be malloced in load_html_templates
 These templates will contain format 

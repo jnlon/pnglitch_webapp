@@ -2,8 +2,8 @@
 #define GLOBALS_H_
 #define MAX_PNG_IN_BYTESIZE 10737418240 //10MB
 #define MAX_PNG_OUT_BYTESIZE 32212254720 //30MB
-//#define IN_BUF_SIZE 1024
 
+#define OUTPUT_DIRECTORY "pnglitch_c_output"
 #define MAX_USER_THREADS 10
 
 //Need to be global for custom libpng write/read fns
