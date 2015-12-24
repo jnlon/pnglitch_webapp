@@ -25,18 +25,14 @@ void my_png_dummy_flush(png_structp png_ptr) {
 
 void my_png_write_fn(png_structp png_ptr, png_bytep data, png_size_t length) {
 
-   //printf("writelen: %lu\n", length);
+   //DEBUG_PRINT(("writelen: %lu\n", length));
 
    if (png_ptr == NULL)
       return;
 
    ENTIRE_PNG_BUF = realloc(ENTIRE_PNG_BUF, PNG_LENGTH + length);
    
-   if (PNG_LENGTH > MAX_PNG_OUT_BYTESIZE)
-      png_error(png_ptr, "Write Error: Trying to realloc > 30MB");
-
    append_bytes(ENTIRE_PNG_BUF, data, &PNG_LENGTH, length);
-
 }
 
 //This callback depends on a global MY_PNG_READ_OFFSET

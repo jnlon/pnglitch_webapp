@@ -7,4 +7,4 @@ DEBUGGER="valgrind --leak-check=full --show-leak-kinds=all"
 
 export CONTENT_LENGTH=`du -b "$1" | cut -d"	" -f1`
 echo "fake_upload.sh: CONTENT_LENGTH = "$CONTENT_LENGTH
-$DEBUGGER ./main < "$1"
+$DEBUGGER ./glitch < "$1"

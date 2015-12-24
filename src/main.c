@@ -25,21 +25,12 @@ void OS_LibShutdown(void);
 long long MY_PNG_READ_OFFSET;
 unsigned char *ENTIRE_PNG_BUF;
 long long PNG_LENGTH; 
-pthread_mutex_t mutextcount;
-int tcount = 0;
 
 /* Use Libpng to tansform the input into into RGB format 
  * (basically re-encode image using all filter methods)
  * Using the write-callback method, store this data in a shared buffer.
  * Then, glitch this buffer manually
  */
-
-int get_mutex_tcount() {
-  pthread_mutex_lock(&mutextcount);
-  int tc = tcount;
-  pthread_mutex_unlock(&mutextcount);
-  return tc;
-}
 
 pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_length) {
 
@@ -92,7 +83,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
   ihdr_infos.width            = png_get_image_width(pm->read_ptr, pm->info_ptr);
 
   if (ihdr_infos.color_type != 2) {
-    print_error_html(PROCESS_ERROR);
+    print_error_html(GLITCH_ERROR);
     free(ENTIRE_PNG_BUF);
     my_deinit_libpng(pm);
     DEBUG_PRINT(("Looks like libpng could not correctly convert to RGB\n"));
@@ -228,7 +219,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
 
       //Stop if error
       if (check_uncompress == NULL) {
-        print_error_html(PROCESS_ERROR);
+        print_error_html(GLITCH_ERROR);
         free(ancil_chunks_buf);
         free(raw_chunk_buf);
         free(unzip_idats_buf);
@@ -315,7 +306,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
         unzipped_idats_len, &glitched_idats_len);
 
     if (glitched_idats == NULL) {
-      print_error_html(PROCESS_ERROR);
+      print_error_html(GLITCH_ERROR);
       free (unzip_idats_buf);
       free (ancil_chunks_buf);
       return -1;
@@ -345,9 +336,8 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
       ofp + (o*3), ofp + (o*4),ofp + (o*5), ofp + (o*6));
 
   //Use pthread to delete image after a certain interval
-  pthread_mutex_lock(&mutextcount);
   pthread_t thread;
-  pthread_create(&thread, NULL, thread_delete_files, (void*)ofp);
+  pthread_create(&thread, NULL, thread_delete_files, out_file_paths);
   pthread_detach(thread);
 
   free(unzip_idats_buf);
@@ -366,11 +356,19 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
-  tcount = 0;
-
   while (FCGI_Accept() >= 0) {
 
     printf("content-type: text/html\r\n\r\n");
+
+    long long bytes_disk_used = get_dir_bytesize(OUTPUT_DIRECTORY);
+
+    //This acts as a way of limiting DDOS for both disk usage and memory
+    if (bytes_disk_used > MAX_DISK_USAGE) {
+      DEBUG_PRINT(("Using too much disk! (%lld < %lld)\n", bytes_disk_used,
+            MAX_DISK_USAGE));
+      print_error_html(BUSY_ERROR);
+      continue;
+    }
 
     long content_length = get_content_length();
 
@@ -424,7 +422,7 @@ int main(int argc, char* argv[]) {
     if (form_filename == NULL) {
       free(form_filename_buf);
       free(form_boundary_buf);
-      print_error_html("Error processing form upload");
+      print_error_html(UPLOAD_ERROR);
       continue;
     }
 
@@ -439,35 +437,20 @@ int main(int argc, char* argv[]) {
     if (PNG_LENGTH <= 0) {
       free(form_filename_buf);
       free(png_buf);
-      print_error_html("Error processing form upload");
+      print_error_html(UPLOAD_ERROR);
       continue;
     }
 
     //png buff is passed around to callbacks for libpng, it will be free'd there
     png_buf = realloc(png_buf, PNG_LENGTH);
-    pthread_t ret = begin(form_filename, png_buf, PNG_LENGTH);
-
+    //pthread_t ret = begin(form_filename, png_buf, PNG_LENGTH);
+    begin(form_filename, png_buf, PNG_LENGTH);
     free(form_filename_buf);
-
-    //wait until some threads finish
-    while (ret != 0) {
-
-      int t = get_mutex_tcount();
-      if (t < MAX_USER_THREADS)
-        break;
-
-      usleep(100000);
-      DEBUG_PRINT(("Max threads reached, pausing\n"));
-    }
   }
 
-  while (1) {
-    int t = get_mutex_tcount();
-    if (t == 0)
-      break;
-    usleep(100000);
-    DEBUG_PRINT(("Waiting for all threads to close on exit\n"));
-  }
+  //When not in an fcgi environment, there will be memleaks 
+  //here because of the paths buffer passed to pthread
+  //usleep(TIME_BEFORE_DELETION*1.1);
 
   OS_LibShutdown();
 

@@ -6,16 +6,63 @@
 #include <pthread.h>
 #include <fcgi_stdio.h>
 
+#include <dirent.h>
+#include <sys/stat.h>
+#include <errno.h>
+
 #include "webio.h"
 #include "debug.h"
 #include "globals.h"
 
+
+long long get_dir_bytesize(char* outdir) {
+
+  DIR *root = opendir(outdir);
+
+  long long dir_total_size = 0;
+
+  while (1) {
+    struct dirent *entry;
+    entry = readdir(root);
+
+    if (entry == NULL)
+      break;
+
+    struct stat filestat;
+
+    char path[MAX_PATH_LENGTH];
+    snprintf(path, MAX_PATH_LENGTH, "%s/%s", OUTPUT_DIRECTORY, entry->d_name);
+
+    int ret = stat(path, &filestat);
+
+    if (ret == -1)  {
+      DEBUG_PRINT(("stat error: %s\n", strerror(errno)));
+      errno = 0;
+      continue;
+    }
+
+    //not regular file
+    if (!S_ISREG(filestat.st_mode))
+      continue;
+
+    long filesize = filestat.st_size;
+
+    //DEBUG_PRINT(("%s : %ld\n", path, filesize));
+
+    dir_total_size += filesize;
+  }
+
+
+  DEBUG_PRINT(("'%s' dir size: %lld\n", outdir, dir_total_size));
+  fflush(stdout);
+  closedir(root);
+
+  return dir_total_size;
+}
+
 void *thread_delete_files(void *paths) {
 
-  tcount += 1;
-  pthread_mutex_unlock(&mutextcount);
-
-  DEBUG_PRINT(("SLEEPING:\n"));
+  DEBUG_PRINT(("going to sleep on thread\n"));
 
   usleep(TIME_BEFORE_DELETION);
 
@@ -27,10 +74,6 @@ void *thread_delete_files(void *paths) {
   }
 
   free(paths);
-
-  pthread_mutex_lock(&mutextcount);
-  tcount -= 1;
-  pthread_mutex_unlock(&mutextcount);
 
   pthread_exit(NULL);
 }

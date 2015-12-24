@@ -4,17 +4,16 @@
 #define SUCCESS_FILE_PATH "success.template.html"
 #define ERROR_FILE_PATH "error.template.html"
 
-#define UPLOAD_ERROR "Encountered error while processing file upload!"
-#define PROCESS_ERROR "An error was ecountered while glitching your PNG file!"
+#define UPLOAD_ERROR "Error while processing file upload!"
+#define GLITCH_ERROR "Error while glitching your PNG file!"
+#define BUSY_ERROR "pnglitch is too busy right now! Try again in a minute!"
 
 #define MAX_FORM_BOUNDARY_LENGTH 1000  //boundary delimits file content
 #define MAX_FORM_META_LENGTH 10000    //multipart/form-data stuff
-#define MAX_CONTENT_LENGTH 10485760L   //10MB
 #define MAX_FILENAME_LENGTH 50        //larger than this will be truncated
-#define MAX_PATH_LENGTH 120         //includes filename and directory path
+#define MAX_PATH_LENGTH 150         //includes filename and directory path
 #define NUM_OUTPUT_FILES 7
 
-#define TIME_BEFORE_DELETION 30*1000*1000 //30 seconds 
 
 /*Templates will be malloced in load_html_templates
 These templates will contain format 
@@ -22,6 +21,7 @@ strings and will be passed to printf*/
 char* success_template;
 char* error_template;
 
+long long get_dir_bytesize(char* outdir);
 int get_form_boundary(char* boundary);
 int get_form_meta_buf(char* buf);
 char *get_form_filename(char* buf, char* filename);
