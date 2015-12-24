@@ -4,8 +4,7 @@
 #define SUCCESS_FILE_PATH "success.template.html"
 #define ERROR_FILE_PATH "error.template.html"
 
-#define UPLOAD_ERROR "An error was encountered while processing the file upload!"
-#define UPLOAD_ERROR_TOO_BIG "An error was encountered while processing the file upload!"
+#define UPLOAD_ERROR "Encountered error while processing file upload!"
 #define PROCESS_ERROR "An error was ecountered while glitching your PNG file!"
 
 #define MAX_FORM_BOUNDARY_LENGTH 1000  //boundary delimits file content
@@ -15,7 +14,7 @@
 #define MAX_PATH_LENGTH 100         //includes filename and directory path
 #define NUM_OF_OUTPUT_FILES 7
 
-#define TIME_BEFORE_DELETION 40*1000*1000 //40 seconds
+#define TIME_BEFORE_DELETION 30*1000*1000 //30 seconds
 
 /*Templates will be malloced in load_html_templates
 These templates will contain format 
@@ -32,8 +31,6 @@ long get_uploaded_file_buf(unsigned char *buf, long content_length,
 
 
 void *thread_delete_files(void *paths);
-
-
 char* load_html_template(char *path);
 void print_error_html(char *msg);
 void print_success_html(char *g1, char *g2, char *g3, char *g4, char *g5, char *g6, char *g7);

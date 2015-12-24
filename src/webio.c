@@ -1,12 +1,10 @@
 #define _GNU_SOURCE
 #include <stdlib.h>
-#include <fcgi_stdio.h>
-#include <fastcgi.h>
-#include <string.h>
-#include <stdlib.h>
-#include <libgen.h>
 #include <unistd.h>
+#include <string.h>
+#include <libgen.h>
 #include <pthread.h>
+#include <fcgi_stdio.h>
 
 #include "webio.h"
 #include "debug.h"
@@ -37,17 +35,24 @@ void *thread_delete_files(void *paths) {
   pthread_exit(NULL);
 }
 
-char* load_html_template(char *path) {
+char *load_html_template(char *path) {
+
+  FILE *template_fp = fopen(path, "rb");
+
+  if (template_fp == NULL) {
+    printf("Cannot load template file '%s'\n", path);
+    fprintf(stderr, "Cannot load template file '%s'\n", path);
+    fflush(NULL);
+    return NULL;
+  }
 
   const int read_sz = 4096;
 
   char *template_buf = calloc(read_sz, 1);
   long template_sz = read_sz;
 
-  FILE *template_fp = fopen(path, "rb");
 
-  if (template_fp == NULL)
-    error_fatal(-1, "load_html_template", "fopen failed on template file");
+    //error_fatal(-1, "load_html_template", "fopen failed on template file");
 
   while (1) {
 
@@ -83,8 +88,10 @@ int get_form_boundary(char* boundary) {
   int bi = 0;
   while (1) {
     boundary[bi] = getc(stdin);
-    if (bi >= 1 && boundary[bi] == '\n' && boundary[bi-1] == '\r')
+    if (bi >= 1 && boundary[bi] == '\n' && boundary[bi-1] == '\r') {
+      DEBUG_PRINT(("form boundary is %d bytes long\n", bi));
       break;
+    }
 
     if (bi >= MAX_FORM_BOUNDARY_LENGTH) {
       DEBUG_PRINT(("Form boundary is too large"));
@@ -101,7 +108,6 @@ long get_content_length() {
 
   if (content_length_c == NULL) {
     DEBUG_PRINT(("No content_length!!\n"));
-    print_error_html("Error processing form upload");
     return -1;
   }
 
@@ -127,12 +133,17 @@ int get_form_meta_buf(char* buf) {
 
   while(i < MAX_FORM_META_LENGTH) { 
 
-    if (feof(stdin)) {
+    /*if (feof(stdin)) {
       DEBUG_PRINT(("End of form (\\r\\n) not found\n"));
       return -1;
-    }
+    }*/
 
-    int byte = getc(stdin);
+    unsigned char byte = getc(stdin);
+
+    /*if (byte == EOF) {
+      DEBUG_PRINT(("End of form (\\r\\n) not found\n"));
+      return -1;
+    }*/
 
     buf[i] = byte;
 
@@ -142,6 +153,9 @@ int get_form_meta_buf(char* buf) {
       sig_i = 0;
 
     i++;
+
+    DEBUG_PRINT(("sig_i: %d -> %d\n<br>", sig_i, begin_request_sig[sig_i]));
+    DEBUG_PRINT(("%d / '%c': sig_i: %d -> %d\n<br>", byte, byte, sig_i, begin_request_sig[sig_i]));
 
     if (sig_i == 4) {
       DEBUG_PRINT(("Form meta length is %d\n", i));

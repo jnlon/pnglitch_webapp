@@ -5,11 +5,15 @@
 
 void error_fatal(int code, char* obj, char* msg) {
   fprintf(stderr,"%s: %s\n", obj, msg);
-  exit(code);
+  fflush(stderr);
+  fflush(stdout);
+  //exit(code);
 }
 
 void error(int code, char* obj, char* msg) {
   fprintf(stderr,"%s: %s\n", obj, msg);
+  fflush(stderr);
+  fflush(stdout);
 }
 
 void dump_buf_to_file(char* filename, BYTE *buf, long length) {

@@ -335,7 +335,6 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
 
   //Use pthread to delete image after a certain interval
   pthread_mutex_lock(&mutextcount);
-
   pthread_t thread;
   pthread_create(&thread, NULL, thread_delete_files, (void*)ofp);
   pthread_detach(thread);
@@ -350,7 +349,12 @@ int main(int argc, char* argv[]) {
   success_template = load_html_template(SUCCESS_FILE_PATH);
   error_template = load_html_template(ERROR_FILE_PATH);
 
-  //pthread_t user_threads[MAX_USER_THREADS];
+  if (error_template == NULL || success_template == NULL ) {
+    printf("pnglitch init: Cannot load templates!\n");
+    OS_LibShutdown();
+    return -1;
+  }
+
   tcount = 0;
 
   while (FCGI_Accept() >= 0) {
