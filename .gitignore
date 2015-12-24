@@ -2,6 +2,5 @@
 *.tmp
 *.buf
 *.txt
-main
+glitch
 extras.c
-TODO.txt
