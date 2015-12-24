@@ -1,4 +1,4 @@
-#include <stdio.h>
+#include <fcgi_stdio.h>
 #include <stdlib.h>
 #include "bufs.h"
 #include "debug.h"

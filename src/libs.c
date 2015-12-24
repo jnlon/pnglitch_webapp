@@ -1,7 +1,7 @@
 #include <zlib.h>
 #include <png.h>
 #include <stdlib.h>
-#include <stdio.h>
+#include <fcgi_stdio.h>
 #include <setjmp.h>
 
 #include "bufs.h"

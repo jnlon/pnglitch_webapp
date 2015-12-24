@@ -87,7 +87,7 @@ int get_form_boundary(char* boundary) {
   //Everything until \r\n (inclusive) is part of the boundary
   int bi = 0;
   while (1) {
-    boundary[bi] = getc(stdin);
+    boundary[bi] = getchar();
     if (bi >= 1 && boundary[bi] == '\n' && boundary[bi-1] == '\r') {
       DEBUG_PRINT(("form boundary is %d bytes long\n", bi));
       break;
@@ -133,17 +133,12 @@ int get_form_meta_buf(char* buf) {
 
   while(i < MAX_FORM_META_LENGTH) { 
 
-    /*if (feof(stdin)) {
+    if (feof(stdin)) {
       DEBUG_PRINT(("End of form (\\r\\n) not found\n"));
       return -1;
-    }*/
+    }
 
-    unsigned char byte = getc(stdin);
-
-    /*if (byte == EOF) {
-      DEBUG_PRINT(("End of form (\\r\\n) not found\n"));
-      return -1;
-    }*/
+    unsigned char byte = getchar();
 
     buf[i] = byte;
 
@@ -153,9 +148,6 @@ int get_form_meta_buf(char* buf) {
       sig_i = 0;
 
     i++;
-
-    DEBUG_PRINT(("sig_i: %d -> %d\n<br>", sig_i, begin_request_sig[sig_i]));
-    DEBUG_PRINT(("%d / '%c': sig_i: %d -> %d\n<br>", byte, byte, sig_i, begin_request_sig[sig_i]));
 
     if (sig_i == 4) {
       DEBUG_PRINT(("Form meta length is %d\n", i));
@@ -173,7 +165,7 @@ long get_uploaded_file_buf(unsigned char *upload, long content_length,
   //TODO: is getc() slow reading from web server?
   int r = 0;
   for (r=0;r<content_length;r++) {
-    char x = getc(stdin);
+    char x = getchar();
     if (feof(stdin))
       break;
     upload[r] = x;
