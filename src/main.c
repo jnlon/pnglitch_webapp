@@ -127,7 +127,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
   struct png_text_struct comment_struct;
 
   comment_struct.compression = -1;
-  comment_struct.key = " Glitched by pnglitch.me ";
+  comment_struct.key = " Glitched by pnglitch.xyz ";
   comment_struct.text = NULL;
   comment_struct.text_length = 0;
   
