@@ -271,12 +271,6 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
 
   char output_dir[] = OUTPUT_DIRECTORY;
 
-  int mkdir_ret = mkdir(OUTPUT_DIRECTORY, S_IRWXU);
-
-  if (mkdir_ret == -1 && errno != EEXIST)
-    error_fatal(1, "problem creating directory", strerror(errno));
-  else if (access(OUTPUT_DIRECTORY, W_OK | X_OK))
-    error_fatal(1, "Problem accessing directory", strerror(errno));
 
   char *out_file_paths = malloc(MAX_PATH_LENGTH*NUM_OUTPUT_FILES);
 
@@ -349,6 +343,13 @@ int main(int argc, char* argv[]) {
 
   success_template = load_html_template(SUCCESS_FILE_PATH);
   error_template = load_html_template(ERROR_FILE_PATH);
+
+  int mkdir_ret = mkdir(OUTPUT_DIRECTORY, S_IRWXU);
+
+  if (mkdir_ret == -1 && errno != EEXIST)
+    error_fatal(1, "problem creating directory", strerror(errno));
+  else if (access(OUTPUT_DIRECTORY, W_OK | X_OK))
+    error_fatal(1, "Problem accessing directory", strerror(errno));
 
   if (error_template == NULL || success_template == NULL ) {
     printf("pnglitch init: Cannot load templates!\n");
