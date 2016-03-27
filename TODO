@@ -1,0 +1,4 @@
+- There's a lot of unnecessary pointer arithmetic that can be removed by using
+  open_memstream or fmemopen. Eventially we should update it to use this.
+
+- Remove occurances of typedef unsigned int BYTE
