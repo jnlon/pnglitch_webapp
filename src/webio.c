@@ -83,8 +83,6 @@ char *load_html_template(char *path) {
 
   if (template_fp == NULL) {
     printf("Cannot load template file '%s'\n", path);
-    fprintf(stderr, "Cannot load template file '%s'\n", path);
-    fflush(NULL);
     return NULL;
   }
 

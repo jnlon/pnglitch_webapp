@@ -340,8 +340,15 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
 
 int main(int argc, char* argv[]) {
 
+  //Otherwise we won't recieve error output if
+  //something goes wrong before main loop
+  FCGI_Accept();
+
   success_template = load_html_template(SUCCESS_FILE_PATH);
   error_template = load_html_template(ERROR_FILE_PATH);
+
+  if (success_template == NULL || error_template == NULL) 
+    error_fatal(-1, "load_html_template", "Cannot load HTML template file(s)");
 
   int mkdir_ret = mkdir(OUTPUT_DIRECTORY, S_IRWXU);
 
