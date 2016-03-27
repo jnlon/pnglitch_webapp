@@ -271,7 +271,6 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
 
   char output_dir[] = OUTPUT_DIRECTORY;
 
-
   char *out_file_paths = malloc(MAX_PATH_LENGTH*NUM_OUTPUT_FILES);
 
   //add entropy to filename
