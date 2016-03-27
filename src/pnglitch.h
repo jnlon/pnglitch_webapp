@@ -29,7 +29,6 @@ void glitch_random_filter(unsigned char *data, unsigned long data_len, unsigned 
 
 unsigned char *zip_idats(unsigned char *raw_data, ulong data_len, long long *compressed_length);
 
-
 unsigned char *uncompress_buffer(struct z_stream_s *inflate_stream, 
     unsigned char *unzip_idats_buf, long *unzip_buf_len, long *unzip_buf_offset);
 

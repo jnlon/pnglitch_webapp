@@ -9,13 +9,11 @@
 #include "debug.h"
 #include "pnglitch.h"
 
-
 typedef unsigned char BYTE;
 
 unsigned char PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //len 8
 unsigned char PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //len 12
 unsigned char IDAT_HDR_BYTES[] = {73, 68, 65, 84};
-
 
 unsigned char *uncompress_buffer(struct z_stream_s *inflate_stream, 
     unsigned char *unzip_idats_buf, 
@@ -39,7 +37,7 @@ unsigned char *uncompress_buffer(struct z_stream_s *inflate_stream,
         ret == Z_BUF_ERROR ||
         inflate_stream->avail_out <= 0) 
     { 
-      //Increase size if output buffer
+      //Increase size of output buffer
       *unzip_buf_len = (*unzip_buf_len*2) + 1;
       unzip_idats_buf = realloc(unzip_idats_buf, *unzip_buf_len);
       continue;
@@ -122,7 +120,6 @@ unsigned char *zip_idats(unsigned char *raw_data, ulong data_len, long long *com
   return(zipped_idats);
 }
 
-
 //Takes uncompressed concated IDAT buffer
 void glitch_random_filter(unsigned char *data, unsigned long data_len, unsigned int scanline_len) {
   DEBUG_PRINT(("\nGlitching offsets with random\n"));
@@ -139,7 +136,6 @@ void glitch_filter(unsigned char *data, unsigned long data_len, unsigned int sca
     data[i] = filter;
   }
 }
-
 
 void glitch_random(unsigned char *data, unsigned long data_len, unsigned int scanline_len, float freq) {
 
@@ -162,7 +158,6 @@ void glitch_random(unsigned char *data, unsigned long data_len, unsigned int sca
 void write_glitched_image(unsigned char *glitched_idats, 
     long glitched_idats_len, unsigned char *ihdr_bytes_buf,
     unsigned char *ancil_buf, long long ancil_len, FILE* fp) {
-
 
   //TODO: is fwrite reliable, should we be checking?
 

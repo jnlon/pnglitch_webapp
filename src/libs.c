@@ -69,7 +69,6 @@ void my_deinit_libpng(my_png_meta *pm) {
   free(pm);
 }
 
-
 void my_init_libpng(my_png_meta *png_meta) {
 
   png_structp png_read_ptr = 
@@ -98,7 +97,6 @@ void my_init_libpng(my_png_meta *png_meta) {
   if (!png_write_ptr)
     error(-1, "libpng", "Could not initialize write pointer");
 
-  
   png_meta->write_ptr = png_write_ptr;
   png_meta->read_ptr = png_read_ptr;
   png_meta->info_ptr = info_ptr;

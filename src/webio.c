@@ -14,7 +14,6 @@
 #include "debug.h"
 #include "globals.h"
 
-
 long long get_dir_bytesize(char* outdir) {
 
   DIR *root = opendir(outdir);
@@ -275,7 +274,6 @@ char *get_form_filename(char* buf, char* filename) {
     filename[i] = '\0'; //make end of form end of string
   else 
     ext_dot[0] = '\0'; //make dot end of string
-
 
   //Note: also set directory permissions
   DEBUG_PRINT(("Filename From form: %s (len %d)\n", filename, i));
