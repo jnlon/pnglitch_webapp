@@ -1,7 +1,7 @@
 #ifndef GLOBALS_H_
 #define GLOBALS_H_
 
-#define OUTPUT_DIRECTORY "pnglitch_c_output"
+#define OUTPUT_DIRECTORY "output"
 #define TIME_BEFORE_DELETION 90*1000*1000 //90 seconds 
 #define MAX_CONTENT_LENGTH 10*1024*1024  //max upload, 10MB
 
