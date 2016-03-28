@@ -17,14 +17,14 @@ void error(int code, char* obj, char* msg) {
   fflush(stdout);
 }
 
-void dump_buf_to_file(char* filename, BYTE *buf, long length) {
+void dump_buf_to_file(char* filename, unsigned char *buf, long length) {
 
   FILE *f = fopen(filename, "wb");
   long left = length;
   long offset = 0;
 
   while (left != 0) {
-    long writ = fwrite(buf+offset, sizeof(BYTE), left, f);
+    long writ = fwrite(buf+offset, sizeof(unsigned char), left, f);
     left -= writ;
     offset += writ;
   }
@@ -33,7 +33,7 @@ void dump_buf_to_file(char* filename, BYTE *buf, long length) {
   printf("Writ %s\n",filename );
 }
 
-void dbg_printbuffer(BYTE *buf, int len) {
+void dbg_printbuffer(unsigned char *buf, int len) {
 #ifdef DEBUG
   DEBUG_PRINT(("\n/// char buffer ///\n"));
   for (int i=0;i<len;i++)

@@ -4,14 +4,14 @@
 #include "debug.h"
 #include "bufs.h"
 
-void int_to_four_bytes(uint i, BYTE *buf) {
+void int_to_four_bytes(uint i, unsigned char *buf) {
   buf[0] = ((i >> 24) & 0xFF);
   buf[1] = ((i >> 16) & 0xFF);
   buf[2] = ((i >> 8) & 0xFF);
   buf[3] = (i & 0xFF);
 }
 
-unsigned int four_bytes_to_int(BYTE bb[]) {
+unsigned int four_bytes_to_int(unsigned char bb[]) {
   uint b1 = bb[0] & 0x0000FF;
   uint b2 = bb[1] & 0x0000FF;
   uint b3 = bb[2] & 0x0000FF;
@@ -32,13 +32,13 @@ void buf_read(unsigned char *dst, unsigned char **src, int to_read) {
   src[0] += to_read;
 }
 
-void buf_slice(long start, long len, BYTE* result, BYTE* data)  {
+void buf_slice(long start, long len, unsigned char *result, unsigned char *data)  {
   memcpy(result, &data[start], len);
 }
 
 //Note: base_offset is incremented automatically, so PNG_LENGTH is incremented here
-void append_bytes(BYTE *basebuf, BYTE *inbuf, long long *base_offset, int inbuf_length) {
-  BYTE* end_of_buf = basebuf + *base_offset;
+void append_bytes(unsigned char *basebuf, unsigned char *inbuf, long long *base_offset, int inbuf_length) {
+  unsigned char *end_of_buf = basebuf + *base_offset;
   for (int i=0;i<inbuf_length;i++) {
     end_of_buf[i] = inbuf[i];
   }

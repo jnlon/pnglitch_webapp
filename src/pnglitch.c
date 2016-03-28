@@ -9,8 +9,6 @@
 #include "debug.h"
 #include "pnglitch.h"
 
-typedef unsigned char BYTE;
-
 unsigned char PNG_SIGNATURE[] = {137, 80, 78, 71, 13, 10, 26, 10}; //len 8
 unsigned char PNG_IEND_CHUNK[] = {0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130}; //len 12
 unsigned char IDAT_HDR_BYTES[] = {73, 68, 65, 84};
