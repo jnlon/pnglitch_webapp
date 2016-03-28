@@ -1,2 +1,7 @@
 - There's a lot of unnecessary pointer arithmetic that can be removed by using
-  open_memstream or fmemopen. Eventially we should update it to use this.
+  open_memstream or fmemopen. 
+
+  functions and variables of interest:
+     - callbacks to/from libpng (my_png_[read|write]_fn)
+     - uncompression/compression with zlib ([un]compress_buffer, zip_idats)
+
