@@ -9,7 +9,7 @@
 #define BUSY_ERROR "pnglitch is too busy right now! Try again in a minute!"
 
 #define MAX_FORM_BOUNDARY_LENGTH 1000  //boundary delimits file content
-#define MAX_FORM_META_LENGTH 10000    //multipart/form-data stuff
+#define MAX_FORM_META_LENGTH 1024*10    //multipart/form-data stuff
 #define MAX_FILENAME_LENGTH 50        //larger than this will be truncated
 #define MAX_PATH_LENGTH 150         //includes filename and directory path
 #define NUM_OUTPUT_FILES 7
@@ -21,12 +21,13 @@ char* success_template;
 char* error_template;
 
 long long get_dir_bytesize(char* outdir);
-int get_form_boundary(char* boundary);
-int get_form_meta_buf(char* buf);
-char *get_form_filename(char* buf, char* filename);
 long get_content_length();
-long get_uploaded_file_buf(unsigned char *buf, long content_length, 
-    char *form_boundary, int form_boundary_len);
+long get_uploaded_file_buf(unsigned char *buf, long content_length);
+
+void my_fcgi_setup();
+int skip_until_end_of_form();
+
+char *get_random_filename(char *form_filename, int length);
 
 void *thread_delete_files(void *paths);
 char *load_html_template(char *path);

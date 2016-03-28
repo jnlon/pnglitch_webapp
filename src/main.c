@@ -127,7 +127,7 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
   struct png_text_struct comment_struct;
 
   comment_struct.compression = -1;
-  comment_struct.key = " Glitched by pnglitch.xyz ";
+  comment_struct.key = "_Glitched_by_pnglitch.xyz_";
   comment_struct.text = NULL;
   comment_struct.text_length = 0;
   
@@ -340,15 +340,9 @@ pthread_t begin(char* infname_sans_ext, unsigned char *png_buf, long long png_le
 
 int main(int argc, char* argv[]) {
 
-  //Otherwise we won't recieve error output if
-  //something goes wrong before main loop
-  FCGI_Accept();
+  my_fcgi_setup();
 
-  success_template = load_html_template(SUCCESS_FILE_PATH);
-  error_template = load_html_template(ERROR_FILE_PATH);
-
-  if (success_template == NULL || error_template == NULL) 
-    error_fatal(-1, "load_html_template", "Cannot load HTML template file(s)");
+  srand(clock());
 
   int mkdir_ret = mkdir(OUTPUT_DIRECTORY, S_IRWXU);
 
@@ -356,12 +350,6 @@ int main(int argc, char* argv[]) {
     error_fatal(1, "problem creating directory", strerror(errno));
   else if (access(OUTPUT_DIRECTORY, W_OK | X_OK))
     error_fatal(1, "Problem accessing directory", strerror(errno));
-
-  if (error_template == NULL || success_template == NULL ) {
-    printf("pnglitch init: Cannot load templates!\n");
-    OS_LibShutdown();
-    return -1;
-  }
 
   while (FCGI_Accept() >= 0) {
 
@@ -379,70 +367,31 @@ int main(int argc, char* argv[]) {
 
     long content_length = get_content_length();
 
-    if (content_length <= 0) {
+    if (content_length <= 0) { //Error code
       switch (content_length) {
         case -1: print_error_html(UPLOAD_ERROR); break;
-        case -2: print_error_html("The uploaded file is too big! Maximum file size is 10MB"); break;
+        case -2: print_error_html(("The uploaded file is too big! Maximum file size is 10MB")); break;
         case -3: print_error_html("The file was too small! Please upload a valid PNG file!"); break;
         default: print_error_html(UPLOAD_ERROR); 
       }
       continue;
     }
 
-    char *form_boundary_buf = malloc(MAX_FORM_BOUNDARY_LENGTH);
-    bzero(form_boundary_buf, MAX_FORM_BOUNDARY_LENGTH);
-
-    int form_boundary_buf_len = get_form_boundary(form_boundary_buf);
-
-    if (form_boundary_buf_len <= 0) {
-      print_error_html(UPLOAD_ERROR);
-      free(form_boundary_buf);
-      continue;
+    if (skip_until_end_of_form() < 0) {
+       print_error_html(UPLOAD_ERROR); 
+       return -1;
     }
 
-    form_boundary_buf = realloc(form_boundary_buf, form_boundary_buf_len);
-
-    char* form_meta_buf = calloc(MAX_FORM_META_LENGTH, 1);
-    bzero(form_meta_buf, MAX_FORM_META_LENGTH);
-    int form_meta_buf_sz  = get_form_meta_buf(form_meta_buf);
-
-    //dbg_printbuffer((unsigned char*)form_meta_buf, form_meta_buf_sz);
-
-    if (form_meta_buf_sz <= 0) {
-      free(form_boundary_buf);
-      free(form_meta_buf);
-      print_error_html(UPLOAD_ERROR);
-      continue;
-    }
-
-    form_meta_buf = realloc(form_meta_buf, form_meta_buf_sz+1);
-    form_meta_buf[form_meta_buf_sz] = '\0';
-
-    char *form_filename_buf = malloc(MAX_FILENAME_LENGTH);
-    bzero(form_filename_buf, MAX_FILENAME_LENGTH);
-
-    char *form_filename = 
-      get_form_filename(form_meta_buf, form_filename_buf);
-
-    free(form_meta_buf);
-
-    if (form_filename == NULL) {
-      free(form_filename_buf);
-      free(form_boundary_buf);
-      print_error_html(UPLOAD_ERROR);
-      continue;
-    }
+    char form_filename[15];
+    get_random_filename(form_filename, 15);
 
     unsigned char *png_buf = calloc(content_length, 1);
 
-    PNG_LENGTH = get_uploaded_file_buf(png_buf, content_length,
-        form_boundary_buf, form_boundary_buf_len);
+    PNG_LENGTH = get_uploaded_file_buf(png_buf, content_length);
 
-    free(form_boundary_buf);
     DEBUG_PRINT(("Size of uploaded png: %ld\n", PNG_LENGTH));
 
     if (PNG_LENGTH <= 0) {
-      free(form_filename_buf);
       free(png_buf);
       print_error_html(UPLOAD_ERROR);
       continue;
@@ -452,7 +401,6 @@ int main(int argc, char* argv[]) {
     png_buf = realloc(png_buf, PNG_LENGTH);
     //pthread_t ret = begin(form_filename, png_buf, PNG_LENGTH);
     begin(form_filename, png_buf, PNG_LENGTH);
-    free(form_filename_buf);
   }
 
   //When not in an fcgi environment, there will be memleaks 
@@ -463,6 +411,8 @@ int main(int argc, char* argv[]) {
 
   free(success_template);
   free(error_template);
+
+  printf("Shutting down!\n");
 
   return 0;
 }
